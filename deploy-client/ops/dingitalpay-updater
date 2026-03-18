@@ -1,0 +1,1111 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() { printf "%s\\n" "$*" >&2; }
+fail() { log "ERRO: $*"; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || fail "Comando ausente: $1"; }
+
+need curl
+need tar
+need sha256sum
+need awk
+need docker
+
+if ! docker compose version >/dev/null 2>&1; then
+  fail "Docker Compose não encontrado. Instale o plugin 'docker compose' antes de continuar."
+fi
+
+INSTALL_ROOT="/opt/dingitalpay"
+PRODUCT_KEY="dingitalpay-platform"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --install-root) INSTALL_ROOT="${2:-}"; shift 2 ;;
+    --product-key) PRODUCT_KEY="${2:-}"; shift 2 ;;
+    *) break ;;
+  esac
+done
+
+CONFIG_DIR="${INSTALL_ROOT}/config"
+ENV_FILE="${CONFIG_DIR}/dingitalpay.env"
+TOKEN_FILE="${CONFIG_DIR}/update_token"
+LOCK_FILE="${CONFIG_DIR}/updater.lock"
+STATE_FILE="${CONFIG_DIR}/updater-state.env"
+LOG_DIR="${INSTALL_ROOT}/logs"
+LOG_FILE="${LOG_DIR}/updater.log"
+
+mkdir -p "$CONFIG_DIR" "$LOG_DIR"
+
+ts() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+append_log() { printf "%s %s\\n" "$(ts)" "$*" >>"$LOG_FILE" || true; }
+
+load_env() {
+  if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$ENV_FILE"
+    set +a
+  fi
+  : "${PROVISIONING_BASE_URL:=https://api.dingitalpay.com/provisioning}"
+  : "${WEB_PORT:=80}"
+  : "${TLS_ENABLED:=false}"
+  : "${TLS_PROVIDER:=}"
+  : "${TLS_HTTP_PORT:=80}"
+  : "${TLS_HTTPS_PORT:=443}"
+  : "${UPDATES_RUNNER_ENABLED:=false}"
+  : "${DINGITALPAY_UPDATER_RUNNING_IN_RUNNER:=false}"
+  : "${UPDATER_HEALTHCHECK_TRIES:=120}"
+  : "${UPDATER_HEALTHCHECK_SLEEP_SECONDS:=1}"
+  : "${UPDATER_INTERNAL_API_HEALTH_URL:=}"
+  : "${UPDATER_INTERNAL_WEB_HEALTH_URL:=}"
+  # IMPORTANT: the updater runs from versioned directories (releases/<version>/deploy). If COMPOSE_PROJECT_NAME
+  # is empty, Docker Compose will derive a different project name per version, spawning parallel stacks.
+  # Default to a stable project name (can still be overridden in dingitalpay.env).
+  : "${COMPOSE_PROJECT_NAME:=dingitalpay-${PRODUCT_KEY}}"
+  : "${UPDATER_ALLOW_BREAKING:=false}"
+  if [ -z "${MINISIGN_PUBLIC_KEY:-}" ] && [ -f "${CONFIG_DIR}/minisign.pub" ]; then
+    MINISIGN_PUBLIC_KEY="$(cat "${CONFIG_DIR}/minisign.pub" 2>/dev/null || true)"
+  fi
+}
+
+normalize_tls_provider() {
+  local raw="${1:-}"
+  raw="$(printf "%s" "$raw" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+  case "$raw" in
+    "" )
+      printf "auto"
+      ;;
+    caddy|default )
+      printf "caddy"
+      ;;
+    nginx|external|external-proxy )
+      printf "nginx"
+      ;;
+    internal|caddy-internal|tls-internal|internal-caddy )
+      printf "tls-internal"
+      ;;
+    * )
+      printf "%s" "$raw"
+      ;;
+  esac
+}
+
+compose_has_running_service() {
+  local service="$1"
+  docker ps \
+    --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+    --filter "label=com.docker.compose.service=${service}" \
+    --format '{{.ID}}' | head -n1 | grep -q .
+}
+
+compose_has_any_service() {
+  local service="$1"
+  docker ps -a \
+    --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+    --filter "label=com.docker.compose.service=${service}" \
+    --format '{{.ID}}' | head -n1 | grep -q .
+}
+
+compose_has_project_stack() {
+  docker ps -a \
+    --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+    --format '{{.ID}}' | head -n1 | grep -q .
+}
+
+resolve_deploy_profiles() {
+  DEPLOY_USE_TLS_PROFILE=false
+  DEPLOY_USE_TLS_INTERNAL_PROFILE=false
+  DEPLOY_USE_RUNNER_PROFILE=false
+  local tls_provider="auto"
+  tls_provider="$(normalize_tls_provider "${TLS_PROVIDER:-}")"
+
+  if [ "${TLS_ENABLED:-false}" = "true" ]; then
+    case "$tls_provider" in
+      nginx)
+        DEPLOY_USE_TLS_PROFILE=false
+        DEPLOY_USE_TLS_INTERNAL_PROFILE=false
+        ;;
+      tls-internal)
+        DEPLOY_USE_TLS_INTERNAL_PROFILE=true
+        ;;
+      auto)
+        if compose_has_running_service dingitalpay-caddy-internal || compose_has_any_service dingitalpay-caddy-internal; then
+          DEPLOY_USE_TLS_INTERNAL_PROFILE=true
+        elif compose_has_running_service dingitalpay-caddy || compose_has_any_service dingitalpay-caddy; then
+          DEPLOY_USE_TLS_PROFILE=true
+        else
+          DEPLOY_USE_TLS_PROFILE=true
+        fi
+        ;;
+      *)
+        DEPLOY_USE_TLS_PROFILE=true
+        ;;
+    esac
+  fi
+
+  if [ "${DINGITALPAY_UPDATER_RUNNING_IN_RUNNER:-false}" = "true" ]; then
+    DEPLOY_USE_RUNNER_PROFILE=false
+  elif compose_has_running_service dingitalpay-updates-runner-prod || compose_has_any_service dingitalpay-updates-runner-prod || [ "${UPDATES_RUNNER_ENABLED:-false}" = "true" ]; then
+    DEPLOY_USE_RUNNER_PROFILE=true
+  fi
+}
+
+remove_project_service_containers() {
+  local service="$1"
+  docker ps -aq \
+    --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+    --filter "label=com.docker.compose.service=${service}" | xargs -r docker rm -f >/dev/null 2>&1 || true
+}
+
+reconcile_disabled_proxy_services() {
+  if [ "${DEPLOY_USE_TLS_PROFILE:-false}" = "true" ]; then
+    remove_project_service_containers dingitalpay-caddy-internal
+    return 0
+  fi
+
+  if [ "${DEPLOY_USE_TLS_INTERNAL_PROFILE:-false}" = "true" ]; then
+    remove_project_service_containers dingitalpay-caddy
+    return 0
+  fi
+
+  remove_project_service_containers dingitalpay-caddy
+  remove_project_service_containers dingitalpay-caddy-internal
+}
+
+validate_deploy_profiles() {
+  if [ "${DEPLOY_USE_TLS_PROFILE:-false}" = "true" ] || [ "${DEPLOY_USE_TLS_INTERNAL_PROFILE:-false}" = "true" ]; then
+    if [ "${WEB_PORT:-80}" = "${TLS_HTTP_PORT:-80}" ]; then
+      fail "Topologia TLS inválida: WEB_PORT=${WEB_PORT:-80} conflita com TLS_HTTP_PORT=${TLS_HTTP_PORT:-80}. Ajuste a instância para manter o web atrás do proxy (ex.: WEB_PORT=8080)."
+    fi
+  fi
+}
+
+health_api() {
+  if [ -n "${UPDATER_INTERNAL_API_HEALTH_URL:-}" ]; then
+    curl -fsS "${UPDATER_INTERNAL_API_HEALTH_URL}" >/dev/null 2>&1
+    return $?
+  fi
+  [ -n "${APP_HOST:-}" ] || fail "APP_HOST não configurado no dingitalpay.env (necessário para healthcheck)"
+  [ -n "${WEB_PORT:-}" ] || fail "WEB_PORT não configurado no dingitalpay.env (necessário para healthcheck)"
+  curl -fsS -H "Host: ${APP_HOST}" "http://127.0.0.1:${WEB_PORT}/api/health" >/dev/null 2>&1
+}
+
+health_web() {
+  if [ -n "${UPDATER_INTERNAL_WEB_HEALTH_URL:-}" ]; then
+    curl -fsS -o /dev/null "${UPDATER_INTERNAL_WEB_HEALTH_URL}"
+    return $?
+  fi
+  [ -n "${APP_HOST:-}" ] || fail "APP_HOST não configurado no dingitalpay.env (necessário para healthcheck)"
+  [ -n "${WEB_PORT:-}" ] || fail "WEB_PORT não configurado no dingitalpay.env (necessário para healthcheck)"
+  curl -fsS -o /dev/null -H "Host: ${APP_HOST}" "http://127.0.0.1:${WEB_PORT}/"
+}
+
+get_token() {
+  [ -f "$TOKEN_FILE" ] || return 1
+  local t
+  t="$(cat "$TOKEN_FILE" 2>/dev/null || true)"
+  t="$(printf "%s" "$t" | tr -d '[:space:]')"
+  [ -n "$t" ] || return 1
+  printf "%s" "$t"
+}
+
+current_version() {
+  if [ -L "${INSTALL_ROOT}/current" ]; then
+    local p
+    p="$(readlink -f "${INSTALL_ROOT}/current" 2>/dev/null || true)"
+    [ -n "$p" ] || return 0
+    basename "$p"
+  fi
+}
+
+verify_signature_if_available() {
+  local file="$1"
+  local sig="$2"
+  if [ -z "${MINISIGN_PUBLIC_KEY:-}" ]; then
+    return 0
+  fi
+  if ! command -v minisign >/dev/null 2>&1; then
+    return 0
+  fi
+  [ -s "$file" ] || return 0
+  [ -s "$sig" ] || return 0
+  local pubfile
+  pubfile="$(mktemp)"
+  printf "%b\\n" "$MINISIGN_PUBLIC_KEY" > "$pubfile"
+  minisign -V -p "$pubfile" -m "$file" -x "$sig" >/dev/null 2>&1 || fail "Assinatura inválida: $(basename "$file")"
+  rm -f "$pubfile"
+}
+
+configure_token() {
+  local token="$1"
+  [ -n "$token" ] || fail "Informe o token."
+  umask 077
+  printf "%s\\n" "$token" >"$TOKEN_FILE"
+  chmod 600 "$TOKEN_FILE" || true
+  append_log "configure ok"
+  log "OK: token configurado em $TOKEN_FILE"
+}
+
+check_updates() {
+  load_env
+  local token
+  token="$(get_token)" || fail "Token não configurado. Rode: sudo dingitalpay-updater configure --token SEU_TOKEN"
+  curl -fsSL "${PROVISIONING_BASE_URL}/api/updates/check" \
+    -H "Content-Type: application/json" \
+    --data-binary "$(printf '{\"token\":\"%s\",\"productKey\":\"%s\"}' "$token" "$PRODUCT_KEY")"
+}
+
+authorize_update() {
+  load_env
+  local token="$1"
+  local version="$2"
+  curl -fsSL "${PROVISIONING_BASE_URL}/api/updates/authorize" \
+    -H "Content-Type: application/json" \
+    --data-binary "$(printf '{\"token\":\"%s\",\"version\":\"%s\",\"productKey\":\"%s\"}' "$token" "$version" "$PRODUCT_KEY")"
+}
+
+plan_update() {
+  local version="$1"
+  local force="${2:-false}"
+  [ -n "$version" ] || fail "Informe a versão (ex.: v1.2.3)."
+  load_env
+
+  local token
+  token="$(get_token)" || fail "Token não configurado. Rode: sudo dingitalpay-updater configure --token SEU_TOKEN"
+
+  if command -v flock >/dev/null 2>&1; then
+    flock -n "$LOCK_FILE" bash -c '
+      set -euo pipefail
+      VERSION="'"$version"'"
+      INSTALL_ROOT="'"$INSTALL_ROOT"'"
+      CONFIG_DIR="'"$CONFIG_DIR"'"
+      ENV_FILE="'"$ENV_FILE"'"
+      LOG_FILE="'"$LOG_FILE"'"
+      PRODUCT_KEY="'"$PRODUCT_KEY"'"
+      PROVISIONING_BASE_URL="'"${PROVISIONING_BASE_URL}"'"
+	      TOKEN_FILE="'"$TOKEN_FILE"'"
+	      WEB_PORT="'"${WEB_PORT}"'"
+	      TLS_ENABLED="'"${TLS_ENABLED}"'"
+	      UPDATER_ALLOW_BREAKING="'"${UPDATER_ALLOW_BREAKING}"'"
+	      FORCE="'"$force"'"
+	      UPDATER_HEALTHCHECK_TRIES="'"${UPDATER_HEALTHCHECK_TRIES}"'"
+	      UPDATER_HEALTHCHECK_SLEEP_SECONDS="'"${UPDATER_HEALTHCHECK_SLEEP_SECONDS}"'"
+	      APP_HOST="'"${APP_HOST:-}"'"
+
+      log() { printf "%s\n" "$*" >&2; }
+      fail() { log "ERRO: $*"; exit 1; }
+      health_api() {
+        if [ -n "${UPDATER_INTERNAL_API_HEALTH_URL:-}" ]; then
+          curl -fsS "${UPDATER_INTERNAL_API_HEALTH_URL}" >/dev/null 2>&1
+          return $?
+        fi
+        [ -n "${APP_HOST:-}" ] || fail "APP_HOST não configurado no dingitalpay.env (necessário para healthcheck)"
+        [ -n "${WEB_PORT:-}" ] || fail "WEB_PORT não configurado no dingitalpay.env (necessário para healthcheck)"
+        curl -fsS -H "Host: ${APP_HOST}" "http://127.0.0.1:${WEB_PORT}/api/health" >/dev/null 2>&1
+      }
+      health_web() {
+        if [ -n "${UPDATER_INTERNAL_WEB_HEALTH_URL:-}" ]; then
+          curl -fsS -o /dev/null "${UPDATER_INTERNAL_WEB_HEALTH_URL}"
+          return $?
+        fi
+        [ -n "${APP_HOST:-}" ] || fail "APP_HOST não configurado no dingitalpay.env (necessário para healthcheck)"
+        [ -n "${WEB_PORT:-}" ] || fail "WEB_PORT não configurado no dingitalpay.env (necessário para healthcheck)"
+        curl -fsS -o /dev/null -H "Host: ${APP_HOST}" "http://127.0.0.1:${WEB_PORT}/"
+      }
+
+      token="$(cat "$TOKEN_FILE" 2>/dev/null || true)"
+      token="$(printf "%s" "$token" | tr -d "[:space:]")"
+      [ -n "$token" ] || fail "Token vazio."
+
+      CURRENT=""
+      if [ -L "${INSTALL_ROOT}/current" ]; then
+        p="$(readlink -f "${INSTALL_ROOT}/current" 2>/dev/null || true)"
+        CURRENT="$(basename "$p" 2>/dev/null || true)"
+      fi
+
+      log "PLAN: versão alvo=${VERSION} produto=${PRODUCT_KEY} install_root=${INSTALL_ROOT}"
+      log "PLAN: versão atual=${CURRENT:-unknown}"
+
+      AUTH_JSON="$(curl -fsSL "${PROVISIONING_BASE_URL}/api/updates/authorize" -H "Content-Type: application/json" --data-binary "$(printf "{\\\"token\\\":\\\"%s\\\",\\\"version\\\":\\\"%s\\\",\\\"productKey\\\":\\\"%s\\\",\\\"currentVersion\\\":\\\"%s\\\"}" "$token" "$VERSION" "$PRODUCT_KEY" "${CURRENT:-}")")" || fail "Falha ao autorizar update"
+
+      ARTIFACT_URL="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"artifactUrl\\\"[[:space:]]*:[[:space:]]*\\\"\\([^\\\"]*\\)\\\".*/\\1/p" | head -n1)"
+      SHA256="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"sha256\\\"[[:space:]]*:[[:space:]]*\\\"\\([a-f0-9]*\\)\\\".*/\\1/p" | head -n1)"
+      DL_TOKEN="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"downloadToken\\\"[[:space:]]*:[[:space:]]*\\\"\\([^\\\"]*\\)\\\".*/\\1/p" | head -n1)"
+      MIN_VERSION="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"minVersion\\\"[[:space:]]*:[[:space:]]*\\\"\\([^\\\"]*\\)\\\".*/\\1/p" | head -n1)"
+      BREAKING="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"breaking\\\"[[:space:]]*:[[:space:]]*\\(true\\|false\\).*/\\1/p" | head -n1)"
+
+      [ -n "$ARTIFACT_URL" ] || fail "authorize inválido (artifactUrl)"
+      [ -n "$SHA256" ] || fail "authorize inválido (sha256)"
+      [ -n "$DL_TOKEN" ] || fail "authorize inválido (downloadToken)"
+
+      norm_ver() {
+        v="$1"
+        v="${v#v}"
+        v="${v%%-*}"
+        printf "%s" "$v"
+      }
+      ver_ge() {
+        a="$(norm_ver "$1")"
+        b="$(norm_ver "$2")"
+        IFS=. read -r a1 a2 a3 <<EOF
+$a
+EOF
+        IFS=. read -r b1 b2 b3 <<EOF
+$b
+EOF
+        a1="${a1:-0}"; a2="${a2:-0}"; a3="${a3:-0}"
+        b1="${b1:-0}"; b2="${b2:-0}"; b3="${b3:-0}"
+        if [ "$a1" -gt "$b1" ]; then return 0; fi
+        if [ "$a1" -lt "$b1" ]; then return 1; fi
+        if [ "$a2" -gt "$b2" ]; then return 0; fi
+        if [ "$a2" -lt "$b2" ]; then return 1; fi
+        [ "$a3" -ge "$b3" ]
+      }
+
+      if [ -n "${MIN_VERSION:-}" ] && [ "${MIN_VERSION}" != "null" ]; then
+        if [ -z "${CURRENT:-}" ]; then
+          if [ "${FORCE:-false}" != "true" ]; then
+            fail "Update requer versão mínima ${MIN_VERSION}, mas não consegui detectar a versão atual. Rode novamente com --force (assumindo o risco) ou ajuste o ponteiro ${INSTALL_ROOT}/current."
+          else
+            log "PLAN: aviso: minVersion=${MIN_VERSION} (versão atual desconhecida, --force habilitado)"
+          fi
+        else
+          if ! ver_ge "${CURRENT}" "${MIN_VERSION}"; then
+            if [ "${FORCE:-false}" != "true" ]; then
+              fail "Update incompatível: versão atual ${CURRENT} < minVersion ${MIN_VERSION}. Atualize primeiro para uma versão compatível (sequencial) ou use --force (não recomendado)."
+            else
+              log "PLAN: aviso: versão atual ${CURRENT} < minVersion ${MIN_VERSION} (forçado)"
+            fi
+          fi
+        fi
+      fi
+
+      if [ "${BREAKING:-false}" = "true" ] && [ "${UPDATER_ALLOW_BREAKING:-false}" != "true" ] && [ "${FORCE:-false}" != "true" ]; then
+        fail "Update marcado como breaking. Rode com --force (assumindo o risco) ou configure UPDATER_ALLOW_BREAKING=true no dingitalpay.env."
+      fi
+
+      WORKDIR="$(mktemp -d)"
+      trap "rm -rf \"$WORKDIR\"" EXIT
+      ARCHIVE="$WORKDIR/release.tar.gz"
+
+      log "PLAN: baixando artefato (dry-run) para validar checksum e estrutura..."
+      curl -fsSL "$ARTIFACT_URL" -H "Authorization: Bearer $DL_TOKEN" -o "$ARCHIVE" || fail "Falha ao baixar artefato"
+      echo "$SHA256  $ARCHIVE" | sha256sum -c - >/dev/null 2>&1 || fail "Checksum inválido (download corrompido)"
+
+      # Optional signature verification of SHA256SUMS (enterprise)
+      if command -v minisign >/dev/null 2>&1 && [ -n "${MINISIGN_PUBLIC_KEY:-}" ]; then
+        SHA256SUMS_URL="${PROVISIONING_BASE_URL}/api/releases/${VERSION}/file/SHA256SUMS?productKey=${PRODUCT_KEY}"
+        SHA256SUMS_SIG_URL="${PROVISIONING_BASE_URL}/api/releases/${VERSION}/file/SHA256SUMS.minisig?productKey=${PRODUCT_KEY}"
+        curl -fsSL "$SHA256SUMS_URL" -H "Authorization: Bearer $token" -o "$WORKDIR/SHA256SUMS" >/dev/null 2>&1 || true
+        curl -fsSL "$SHA256SUMS_SIG_URL" -H "Authorization: Bearer $token" -o "$WORKDIR/SHA256SUMS.minisig" >/dev/null 2>&1 || true
+        if [ -s "$WORKDIR/SHA256SUMS" ] && [ -s "$WORKDIR/SHA256SUMS.minisig" ]; then
+          pubfile="$(mktemp)"
+          printf "%b\n" "$MINISIGN_PUBLIC_KEY" > "$pubfile"
+          minisign -V -p "$pubfile" -m "$WORKDIR/SHA256SUMS" -x "$WORKDIR/SHA256SUMS.minisig" >/dev/null 2>&1 || fail "Assinatura inválida (SHA256SUMS)"
+          rm -f "$pubfile"
+          log "PLAN: assinatura OK (SHA256SUMS)"
+        else
+          log "PLAN: assinatura não disponível para este release (seguindo com checksum do authorize)"
+        fi
+      else
+        log "PLAN: minisign não configurado/instalado (pulando assinatura)"
+      fi
+
+      # Validate archive contains deploy/compose.yml (without extracting).
+      # Accept both:
+      # - deploy/compose.yml
+      # - <folder>/deploy/compose.yml
+      if ! tar -tzf "$ARCHIVE" 2>/dev/null | sed "s|^\\./||" | grep -E "^([^/]+/)?deploy/compose\\.yml$" >/dev/null 2>&1; then
+        fail "Release inválido: deploy/compose.yml não encontrado no tar (estrutura inesperada)"
+      fi
+      log "PLAN: estrutura OK (deploy/compose.yml encontrado)"
+
+      # Validate minimum requirements for safe, configurable deploy.
+      # Old/legacy releases with fixed "80:80" or references to "deploy-client/" are not safe to apply.
+      COMPOSE_TAR_PATH="$(tar -tzf "$ARCHIVE" 2>/dev/null | grep -E "^(\\./)?([^/]+/)?deploy/compose\\.yml$" | head -n1 || true)"
+      [ -n "$COMPOSE_TAR_PATH" ] || fail "Release inválido: compose.yml não encontrado (path)"
+      tar -xOf "$ARCHIVE" "$COMPOSE_TAR_PATH" > "$WORKDIR/compose.yml" 2>/dev/null || fail "Release inválido: não foi possível ler compose.yml"
+      if ! grep -q "WEB_PORT" "$WORKDIR/compose.yml"; then
+        fail "Release incompatível: compose.yml precisa usar WEB_PORT (porta configurável) para evitar conflitos"
+      fi
+      if grep -q "deploy-client/" "$WORKDIR/compose.yml"; then
+        fail "Release incompatível: compose.yml referencia deploy-client/. Gere um release mais novo"
+      fi
+
+	      if health_api; then
+	        log "PLAN: healthcheck atual OK (/api/health)"
+	      else
+	        log "PLAN: aviso: healthcheck atual falhou (/api/health). Ainda assim, apply terá rollback."
+	      fi
+
+      printf "%s plan ok version=%s current=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VERSION" "${CURRENT:-unknown}" >>"$LOG_FILE" || true
+      log "OK"
+    '
+  else
+    # Fallback without flock (should be rare)
+    fail "flock não encontrado; instale util-linux (recomendado) para rodar plan com lock."
+  fi
+
+  append_log "plan ok version=${version}"
+  log "OK: plan concluído (${version})"
+}
+
+apply_update() {
+  local version="$1"
+  local force="${2:-false}"
+  [ -n "$version" ] || fail "Informe a versão (ex.: v1.2.3)."
+  load_env
+  resolve_deploy_profiles
+  validate_deploy_profiles
+  reconcile_disabled_proxy_services
+
+  local token
+  token="$(get_token)" || fail "Token não configurado. Rode: sudo dingitalpay-updater configure --token SEU_TOKEN"
+
+  if command -v flock >/dev/null 2>&1; then
+    flock -n "$LOCK_FILE" bash -c '
+      set -euo pipefail
+      VERSION="'"$version"'"
+      INSTALL_ROOT="'"$INSTALL_ROOT"'"
+      CONFIG_DIR="'"$CONFIG_DIR"'"
+      ENV_FILE="'"$ENV_FILE"'"
+      LOG_FILE="'"$LOG_FILE"'"
+      STATE_FILE="'"$STATE_FILE"'"
+	      PRODUCT_KEY="'"$PRODUCT_KEY"'"
+	      PROVISIONING_BASE_URL="'"${PROVISIONING_BASE_URL}"'"
+	      WEB_PORT="'"${WEB_PORT}"'"
+	      COMPOSE_PROJECT_NAME="'"${COMPOSE_PROJECT_NAME}"'"
+	      TLS_ENABLED="'"${TLS_ENABLED}"'"
+	      TLS_HTTP_PORT="'"${TLS_HTTP_PORT}"'"
+	      DEPLOY_USE_TLS_PROFILE="'"${DEPLOY_USE_TLS_PROFILE}"'"
+	      DEPLOY_USE_TLS_INTERNAL_PROFILE="'"${DEPLOY_USE_TLS_INTERNAL_PROFILE}"'"
+	      DEPLOY_USE_RUNNER_PROFILE="'"${DEPLOY_USE_RUNNER_PROFILE}"'"
+	      UPDATER_ALLOW_BREAKING="'"${UPDATER_ALLOW_BREAKING}"'"
+	      FORCE="'"$force"'"
+	      UPDATER_HEALTHCHECK_TRIES="'"${UPDATER_HEALTHCHECK_TRIES}"'"
+	      UPDATER_HEALTHCHECK_SLEEP_SECONDS="'"${UPDATER_HEALTHCHECK_SLEEP_SECONDS}"'"
+	      UPDATER_INTERNAL_API_HEALTH_URL="'"${UPDATER_INTERNAL_API_HEALTH_URL}"'"
+	      UPDATER_INTERNAL_WEB_HEALTH_URL="'"${UPDATER_INTERNAL_WEB_HEALTH_URL}"'"
+	      TOKEN_FILE="'"$TOKEN_FILE"'"
+
+      log() { printf "%s\\n" "$*" >&2; }
+      fail() { log "ERRO: $*"; exit 1; }
+      health_api() {
+        if [ -n "${UPDATER_INTERNAL_API_HEALTH_URL:-}" ]; then
+          curl -fsS "${UPDATER_INTERNAL_API_HEALTH_URL}" >/dev/null 2>&1
+          return $?
+        fi
+        [ -n "${APP_HOST:-}" ] || fail "APP_HOST não configurado no dingitalpay.env (necessário para healthcheck)"
+        [ -n "${WEB_PORT:-}" ] || fail "WEB_PORT não configurado no dingitalpay.env (necessário para healthcheck)"
+        curl -fsS -H "Host: ${APP_HOST}" "http://127.0.0.1:${WEB_PORT}/api/health" >/dev/null 2>&1
+      }
+      health_web() {
+        if [ -n "${UPDATER_INTERNAL_WEB_HEALTH_URL:-}" ]; then
+          curl -fsS -o /dev/null "${UPDATER_INTERNAL_WEB_HEALTH_URL}"
+          return $?
+        fi
+        [ -n "${APP_HOST:-}" ] || fail "APP_HOST não configurado no dingitalpay.env (necessário para healthcheck)"
+        [ -n "${WEB_PORT:-}" ] || fail "WEB_PORT não configurado no dingitalpay.env (necessário para healthcheck)"
+        curl -fsS -o /dev/null -H "Host: ${APP_HOST}" "http://127.0.0.1:${WEB_PORT}/"
+      }
+
+      token="$(cat "$TOKEN_FILE" 2>/dev/null || true)"
+      token="$(printf "%s" "$token" | tr -d "[:space:]")"
+      [ -n "$token" ] || fail "Token vazio."
+
+      CURRENT=""
+      if [ -L "${INSTALL_ROOT}/current" ]; then
+        p="$(readlink -f "${INSTALL_ROOT}/current" 2>/dev/null || true)"
+        CURRENT="$(basename "$p" 2>/dev/null || true)"
+      fi
+
+      AUTH_JSON="$(curl -fsSL "${PROVISIONING_BASE_URL}/api/updates/authorize" -H "Content-Type: application/json" --data-binary "$(printf "{\\\"token\\\":\\\"%s\\\",\\\"version\\\":\\\"%s\\\",\\\"productKey\\\":\\\"%s\\\",\\\"currentVersion\\\":\\\"%s\\\"}" "$token" "$VERSION" "$PRODUCT_KEY" "${CURRENT:-}")")" || fail "Falha ao autorizar update"
+
+      ARTIFACT_URL="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"artifactUrl\\\"[[:space:]]*:[[:space:]]*\\\"\\([^\\\"]*\\)\\\".*/\\1/p" | head -n1)"
+      SHA256="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"sha256\\\"[[:space:]]*:[[:space:]]*\\\"\\([a-f0-9]*\\)\\\".*/\\1/p" | head -n1)"
+      DL_TOKEN="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"downloadToken\\\"[[:space:]]*:[[:space:]]*\\\"\\([^\\\"]*\\)\\\".*/\\1/p" | head -n1)"
+      MIN_VERSION="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"minVersion\\\"[[:space:]]*:[[:space:]]*\\\"\\([^\\\"]*\\)\\\".*/\\1/p" | head -n1)"
+      BREAKING="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"breaking\\\"[[:space:]]*:[[:space:]]*\\(true\\|false\\).*/\\1/p" | head -n1)"
+
+      [ -n "$ARTIFACT_URL" ] || fail "authorize inválido (artifactUrl)"
+      [ -n "$SHA256" ] || fail "authorize inválido (sha256)"
+      [ -n "$DL_TOKEN" ] || fail "authorize inválido (downloadToken)"
+
+      norm_ver() {
+        v="$1"
+        v="${v#v}"
+        v="${v%%-*}"
+        printf "%s" "$v"
+      }
+      ver_ge() {
+        a="$(norm_ver "$1")"
+        b="$(norm_ver "$2")"
+        IFS=. read -r a1 a2 a3 <<EOF
+$a
+EOF
+        IFS=. read -r b1 b2 b3 <<EOF
+$b
+EOF
+        a1="${a1:-0}"; a2="${a2:-0}"; a3="${a3:-0}"
+        b1="${b1:-0}"; b2="${b2:-0}"; b3="${b3:-0}"
+        if [ "$a1" -gt "$b1" ]; then return 0; fi
+        if [ "$a1" -lt "$b1" ]; then return 1; fi
+        if [ "$a2" -gt "$b2" ]; then return 0; fi
+        if [ "$a2" -lt "$b2" ]; then return 1; fi
+        [ "$a3" -ge "$b3" ]
+      }
+
+      if [ -n "${MIN_VERSION:-}" ] && [ "${MIN_VERSION}" != "null" ]; then
+        if [ -z "${CURRENT:-}" ]; then
+          if [ "${FORCE:-false}" != "true" ]; then
+            fail "Update requer versão mínima ${MIN_VERSION}, mas não consegui detectar a versão atual. Rode novamente com --force (assumindo o risco) ou ajuste o ponteiro ${INSTALL_ROOT}/current."
+          else
+            log "APPLY: aviso: minVersion=${MIN_VERSION} (versão atual desconhecida, --force habilitado)"
+          fi
+        else
+          if ! ver_ge "${CURRENT}" "${MIN_VERSION}"; then
+            if [ "${FORCE:-false}" != "true" ]; then
+              fail "Update incompatível: versão atual ${CURRENT} < minVersion ${MIN_VERSION}. Atualize primeiro para uma versão compatível (sequencial) ou use --force (não recomendado)."
+            else
+              log "APPLY: aviso: versão atual ${CURRENT} < minVersion ${MIN_VERSION} (forçado)"
+            fi
+          fi
+        fi
+      fi
+
+      if [ "${BREAKING:-false}" = "true" ] && [ "${UPDATER_ALLOW_BREAKING:-false}" != "true" ] && [ "${FORCE:-false}" != "true" ]; then
+        fail "Update marcado como breaking. Rode com --force (assumindo o risco) ou configure UPDATER_ALLOW_BREAKING=true no dingitalpay.env."
+      fi
+
+      if [ -n "${CURRENT:-}" ] && [ "$CURRENT" = "$VERSION" ] && [ "${FORCE:-false}" != "true" ]; then
+        log "APPLY: versão atual já é ${VERSION}; validando saúde antes de pular o apply"
+        if health_api && health_web; then
+          printf "%s update skipped version=%s reason=already_current\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VERSION" >>"$LOG_FILE" || true
+          log "OK"
+          exit 0
+        fi
+        log "APPLY: versão igual, mas healthcheck falhou; executando repair inplace"
+      fi
+
+      WORKDIR="$(mktemp -d)"
+      trap "rm -rf \"$WORKDIR\"" EXIT
+      ARCHIVE="$WORKDIR/release.tar.gz"
+
+      curl -fsSL "$ARTIFACT_URL" -H "Authorization: Bearer $DL_TOKEN" -o "$ARCHIVE" || fail "Falha ao baixar artefato"
+      echo "$SHA256  $ARCHIVE" | sha256sum -c - >/dev/null 2>&1 || fail "Checksum inválido (download corrompido)"
+
+      # Optional signature verification (if minisign + key provided)
+      if command -v minisign >/dev/null 2>&1 && [ -n "${MINISIGN_PUBLIC_KEY:-}" ]; then
+        SHA256SUMS_URL="${PROVISIONING_BASE_URL}/api/releases/${VERSION}/file/SHA256SUMS?productKey=${PRODUCT_KEY}"
+        SHA256SUMS_SIG_URL="${PROVISIONING_BASE_URL}/api/releases/${VERSION}/file/SHA256SUMS.minisig?productKey=${PRODUCT_KEY}"
+        curl -fsSL "$SHA256SUMS_URL" -H "Authorization: Bearer $token" -o "$WORKDIR/SHA256SUMS" >/dev/null 2>&1 || true
+        curl -fsSL "$SHA256SUMS_SIG_URL" -H "Authorization: Bearer $token" -o "$WORKDIR/SHA256SUMS.minisig" >/dev/null 2>&1 || true
+        if [ -s "$WORKDIR/SHA256SUMS" ] && [ -s "$WORKDIR/SHA256SUMS.minisig" ]; then
+          pubfile="$(mktemp)"
+          printf "%b\\n" "$MINISIGN_PUBLIC_KEY" > "$pubfile"
+          minisign -V -p "$pubfile" -m "$WORKDIR/SHA256SUMS" -x "$WORKDIR/SHA256SUMS.minisig" >/dev/null 2>&1 || fail "Assinatura inválida (SHA256SUMS)"
+          rm -f "$pubfile"
+        fi
+      fi
+
+      RELEASE_DIR="${INSTALL_ROOT}/releases/${VERSION}"
+      CURRENT_LINK="${INSTALL_ROOT}/current"
+      PREV_LINK=""
+      if [ -L "$CURRENT_LINK" ] || [ -e "$CURRENT_LINK" ]; then
+        PREV_LINK="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
+      fi
+
+      # Backup before changing anything. Default is schema-only (fast). Full backups can be enabled via env.
+      if [ -n "$PREV_LINK" ] && [ -d "$PREV_LINK/deploy" ]; then
+        set -a
+        # shellcheck disable=SC1090
+        . "$ENV_FILE"
+        set +a
+        BACKUP_DIR="${UPDATER_BACKUP_DIR:-${INSTALL_ROOT}/backups}"
+        BACKUP_MODE="${UPDATER_BACKUP_MODE:-schema}" # none|schema|full
+        BACKUP_KEEP="${UPDATER_BACKUP_KEEP:-10}" # number of snapshots to keep
+        SNAPSHOT_ROOT="${BACKUP_DIR}/snapshots"
+        mkdir -p "$SNAPSHOT_ROOT"
+        TS="$(date -u +%Y%m%dT%H%M%SZ)"
+        SNAPSHOT_DIR="${SNAPSHOT_ROOT}/${TS}"
+        mkdir -p "$SNAPSHOT_DIR"
+        if [ "$BACKUP_MODE" != "none" ]; then
+          for DBNAME in "${DINGITALPAY_PROD_DB:-dingitalpay_prod}"; do
+            (cd "$PREV_LINK/deploy" && docker compose --env-file "$ENV_FILE" -f compose.yml exec -T dingitalpay-postgres pg_dump --schema-only -U postgres "$DBNAME") > "${SNAPSHOT_DIR}/schema-${DBNAME}.sql" 2>/dev/null || true
+            if [ "$BACKUP_MODE" = "full" ]; then
+              (cd "$PREV_LINK/deploy" && docker compose --env-file "$ENV_FILE" -f compose.yml exec -T dingitalpay-postgres pg_dump -Fc -U postgres "$DBNAME") > "${SNAPSHOT_DIR}/full-${DBNAME}.dump" 2>/dev/null || true
+            fi
+          done
+        fi
+        # Retention (best-effort)
+        if [ -n "$BACKUP_KEEP" ] && [ "$BACKUP_KEEP" -gt 0 ] 2>/dev/null; then
+          ls -1t "$SNAPSHOT_ROOT" 2>/dev/null | awk "NR>${BACKUP_KEEP}" | xargs -r -I{} rm -rf "${SNAPSHOT_ROOT}/{}" 2>/dev/null || true
+        fi
+      fi
+
+      mkdir -p "$RELEASE_DIR"
+      tar -xzf "$ARCHIVE" -C "$RELEASE_DIR"
+      [ -f "$RELEASE_DIR/deploy/compose.yml" ] || fail "Release inválido: deploy/compose.yml não encontrado"
+      if ! grep -q "WEB_PORT" "$RELEASE_DIR/deploy/compose.yml"; then
+        fail "Release incompatível: compose.yml precisa usar WEB_PORT (porta configurável)"
+      fi
+      if grep -q "deploy-client/" "$RELEASE_DIR/deploy/compose.yml"; then
+        fail "Release incompatível: compose.yml referencia deploy-client/. Gere um release mais novo"
+      fi
+
+      # Link env into release deploy dir
+      [ -f "$ENV_FILE" ] || fail "Config não encontrada: $ENV_FILE"
+      ln -sfn "$ENV_FILE" "$RELEASE_DIR/deploy/.env"
+      updater_in_release=""
+      if [ -f "$RELEASE_DIR/deploy/ops/dingitalpay-updater" ]; then
+        updater_in_release="$RELEASE_DIR/deploy/ops/dingitalpay-updater"
+      else
+        candidate="$(ls -1 "$RELEASE_DIR/deploy/ops" 2>/dev/null | grep -E "updater$" | head -n1 || true)"
+        if [ -n "$candidate" ]; then
+          updater_in_release="$RELEASE_DIR/deploy/ops/$candidate"
+        fi
+      fi
+      if [ -n "$updater_in_release" ]; then
+        install -m 755 "$updater_in_release" /usr/local/bin/dingitalpay-updater >/dev/null 2>&1 || cp -f "$updater_in_release" /usr/local/bin/dingitalpay-updater || true
+        chmod 755 /usr/local/bin/dingitalpay-updater >/dev/null 2>&1 || true
+        if grep -q "^UPDATES_RUNNER_BIN=/opt/dingitalpay/current/deploy/ops/.*updater$" "$ENV_FILE" 2>/dev/null; then
+          sed -i "s|^UPDATES_RUNNER_BIN=/opt/dingitalpay/current/deploy/ops/.*updater$|UPDATES_RUNNER_BIN=/usr/local/bin/dingitalpay-updater|" "$ENV_FILE" || true
+        fi
+      fi
+
+      # Persist state for rollback (simple k=v file; no external deps)
+      if [ -n "$PREV_LINK" ]; then
+        umask 077
+        {
+          echo "previous=$PREV_LINK"
+          echo "next=$RELEASE_DIR"
+          echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        } > "$STATE_FILE" || true
+      fi
+
+      cd "$RELEASE_DIR/deploy"
+      DC_ARGS=()
+      if [ -n "$COMPOSE_PROJECT_NAME" ]; then
+        DC_ARGS+=(--project-name "$COMPOSE_PROJECT_NAME")
+      fi
+      PROFILE_ARGS=()
+      if [ "${DEPLOY_USE_TLS_PROFILE:-false}" = "true" ]; then
+        PROFILE_ARGS+=(--profile tls)
+      fi
+      if [ "${DEPLOY_USE_TLS_INTERNAL_PROFILE:-false}" = "true" ]; then
+        PROFILE_ARGS+=(--profile tls-internal)
+      fi
+      if [ "${DEPLOY_USE_RUNNER_PROFILE:-false}" = "true" ]; then
+        PROFILE_ARGS+=(--profile runner)
+      fi
+      log "APPLY: profiles tls=${DEPLOY_USE_TLS_PROFILE:-false} tls-internal=${DEPLOY_USE_TLS_INTERNAL_PROFILE:-false} runner=${DEPLOY_USE_RUNNER_PROFILE:-false}"
+
+      # Run migrations explicitly (so new migration files are applied even if api/web does not restart).
+      if ! docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --profile migrate --env-file "$ENV_FILE" -f compose.yml run --rm dingitalpay-migrate-prod; then
+        fail "Falha ao aplicar migrations"
+      fi
+
+      if ! docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --build; then
+        if [ -n "$PREV_LINK" ] && [ -d "$PREV_LINK/deploy" ]; then
+          (cd "$PREV_LINK/deploy" && docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --build) || true
+        fi
+        fail "Falha ao aplicar update"
+	    fi
+
+      docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --force-recreate dingitalpay-api-prod dingitalpay-web >/dev/null 2>&1 \
+        || docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --build dingitalpay-api-prod dingitalpay-web >/dev/null 2>&1 \
+        || true
+	
+	    HC_TRIES="${UPDATER_HEALTHCHECK_TRIES:-120}"
+	    HC_SLEEP="${UPDATER_HEALTHCHECK_SLEEP_SECONDS:-1}"
+	
+	    wait_for_api_health() {
+	      for _i in $(seq 1 "$HC_TRIES"); do
+	        if health_api; then
+	          return 0
+	        fi
+	        sleep "$HC_SLEEP"
+	      done
+	      return 1
+	    }
+	
+	    wait_for_web_root() {
+	      for _i in $(seq 1 "$HC_TRIES"); do
+	        if health_web; then
+	          return 0
+	        fi
+	        sleep "$HC_SLEEP"
+	      done
+	      return 1
+	    }
+	
+	    rollback_to_prev() {
+	      if [ -n "$PREV_LINK" ] && [ -d "$PREV_LINK/deploy" ]; then
+	        log "ROLLBACK: voltando para $(basename "$PREV_LINK")..."
+	        (cd "$PREV_LINK/deploy" && docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --build) || true
+          (cd "$PREV_LINK/deploy" && docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --force-recreate dingitalpay-api-prod dingitalpay-web) >/dev/null 2>&1 || true
+	        if wait_for_api_health && wait_for_web_root; then
+	          printf "%s rollback ok to=%s (auto)\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$PREV_LINK")" >>"$LOG_FILE" || true
+	          return 0
+	        fi
+	      fi
+	      printf "%s rollback failed (auto)\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$LOG_FILE" || true
+	      return 1
+	    }
+	
+	    if ! wait_for_api_health; then
+	      printf "%s apply failed version=%s reason=healthcheck_api\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VERSION" >>"$LOG_FILE" || true
+	      rollback_to_prev || true
+	      fail "Healthcheck falhou após update (/api/health). Rollback executado (se possível)."
+	    fi
+	    if ! wait_for_web_root; then
+	      printf "%s apply failed version=%s reason=healthcheck_web\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VERSION" >>"$LOG_FILE" || true
+	      rollback_to_prev || true
+	      fail "Healthcheck falhou após update (web /). Rollback executado (se possível)."
+	    fi
+	
+	    # Switch current only after a successful update + healthcheck (atomic pointer update).
+	    ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
+
+      printf "%s update applied version=%s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VERSION" >>"$LOG_FILE" || true
+      log "OK"
+    '
+  else
+    bash -c '
+      set -euo pipefail
+      VERSION="'"$version"'"
+      INSTALL_ROOT="'"$INSTALL_ROOT"'"
+      CONFIG_DIR="'"$CONFIG_DIR"'"
+    ENV_FILE="'"$ENV_FILE"'"
+    LOG_FILE="'"$LOG_FILE"'"
+    STATE_FILE="'"$STATE_FILE"'"
+    PRODUCT_KEY="'"$PRODUCT_KEY"'"
+    PROVISIONING_BASE_URL="'"${PROVISIONING_BASE_URL}"'"
+    WEB_PORT="'"${WEB_PORT}"'"
+    COMPOSE_PROJECT_NAME="'"${COMPOSE_PROJECT_NAME}"'"
+    DEPLOY_USE_TLS_PROFILE="'"${DEPLOY_USE_TLS_PROFILE}"'"
+    DEPLOY_USE_TLS_INTERNAL_PROFILE="'"${DEPLOY_USE_TLS_INTERNAL_PROFILE}"'"
+    DEPLOY_USE_RUNNER_PROFILE="'"${DEPLOY_USE_RUNNER_PROFILE}"'"
+    UPDATER_INTERNAL_API_HEALTH_URL="'"${UPDATER_INTERNAL_API_HEALTH_URL}"'"
+    UPDATER_INTERNAL_WEB_HEALTH_URL="'"${UPDATER_INTERNAL_WEB_HEALTH_URL}"'"
+    TOKEN_FILE="'"$TOKEN_FILE"'"
+
+    log() { printf "%s\\n" "$*" >&2; }
+    fail() { log "ERRO: $*"; exit 1; }
+    health_api() {
+      if [ -n "${UPDATER_INTERNAL_API_HEALTH_URL:-}" ]; then
+        curl -fsS "${UPDATER_INTERNAL_API_HEALTH_URL}" >/dev/null 2>&1
+        return $?
+      fi
+      [ -n "${APP_HOST:-}" ] || fail "APP_HOST não configurado no dingitalpay.env (necessário para healthcheck)"
+      [ -n "${WEB_PORT:-}" ] || fail "WEB_PORT não configurado no dingitalpay.env (necessário para healthcheck)"
+      curl -fsS -H "Host: ${APP_HOST}" "http://127.0.0.1:${WEB_PORT}/api/health" >/dev/null 2>&1
+    }
+    health_web() {
+      if [ -n "${UPDATER_INTERNAL_WEB_HEALTH_URL:-}" ]; then
+        curl -fsS -o /dev/null "${UPDATER_INTERNAL_WEB_HEALTH_URL}"
+        return $?
+      fi
+      [ -n "${APP_HOST:-}" ] || fail "APP_HOST não configurado no dingitalpay.env (necessário para healthcheck)"
+      [ -n "${WEB_PORT:-}" ] || fail "WEB_PORT não configurado no dingitalpay.env (necessário para healthcheck)"
+      curl -fsS -o /dev/null -H "Host: ${APP_HOST}" "http://127.0.0.1:${WEB_PORT}/"
+    }
+
+    token="$(cat "$TOKEN_FILE" 2>/dev/null || true)"
+    token="$(printf "%s" "$token" | tr -d "[:space:]")"
+    [ -n "$token" ] || fail "Token vazio."
+
+    AUTH_JSON="$(curl -fsSL "${PROVISIONING_BASE_URL}/api/updates/authorize" -H "Content-Type: application/json" --data-binary "$(printf "{\\\"token\\\":\\\"%s\\\",\\\"version\\\":\\\"%s\\\",\\\"productKey\\\":\\\"%s\\\"}" "$token" "$VERSION" "$PRODUCT_KEY")")" || fail "Falha ao autorizar update"
+
+    ARTIFACT_URL="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"artifactUrl\\\"[[:space:]]*:[[:space:]]*\\\"\\([^\\\"]*\\)\\\".*/\\1/p" | head -n1)"
+    SHA256="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"sha256\\\"[[:space:]]*:[[:space:]]*\\\"\\([a-f0-9]*\\)\\\".*/\\1/p" | head -n1)"
+    DL_TOKEN="$(printf "%s" "$AUTH_JSON" | sed -n "s/.*\\\"downloadToken\\\"[[:space:]]*:[[:space:]]*\\\"\\([^\\\"]*\\)\\\".*/\\1/p" | head -n1)"
+
+    [ -n "$ARTIFACT_URL" ] || fail "authorize inválido (artifactUrl)"
+    [ -n "$SHA256" ] || fail "authorize inválido (sha256)"
+    [ -n "$DL_TOKEN" ] || fail "authorize inválido (downloadToken)"
+
+    CURRENT=""
+    if [ -L "${INSTALL_ROOT}/current" ]; then
+      p="$(readlink -f "${INSTALL_ROOT}/current" 2>/dev/null || true)"
+      CURRENT="$(basename "$p" 2>/dev/null || true)"
+    fi
+
+    if [ -n "${CURRENT:-}" ] && [ "$CURRENT" = "$VERSION" ] && [ "${FORCE:-false}" != "true" ]; then
+      log "APPLY: versão atual já é ${VERSION}; validando saúde antes de pular o apply"
+      if health_api && health_web; then
+        printf "%s update skipped version=%s reason=already_current\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VERSION" >>"$LOG_FILE" || true
+        log "OK"
+        exit 0
+      fi
+      log "APPLY: versão igual, mas healthcheck falhou; executando repair inplace"
+    fi
+
+    WORKDIR="$(mktemp -d)"
+    trap "rm -rf \"$WORKDIR\"" EXIT
+    ARCHIVE="$WORKDIR/release.tar.gz"
+
+    curl -fsSL "$ARTIFACT_URL" -H "Authorization: Bearer $DL_TOKEN" -o "$ARCHIVE" || fail "Falha ao baixar artefato"
+    echo "$SHA256  $ARCHIVE" | sha256sum -c - >/dev/null 2>&1 || fail "Checksum inválido (download corrompido)"
+
+    # Optional signature verification (if minisign + key provided)
+      if command -v minisign >/dev/null 2>&1 && [ -n "${MINISIGN_PUBLIC_KEY:-}" ]; then
+        SHA256SUMS_URL="${PROVISIONING_BASE_URL}/api/releases/${VERSION}/file/SHA256SUMS?productKey=${PRODUCT_KEY}"
+        SHA256SUMS_SIG_URL="${PROVISIONING_BASE_URL}/api/releases/${VERSION}/file/SHA256SUMS.minisig?productKey=${PRODUCT_KEY}"
+      curl -fsSL "$SHA256SUMS_URL" -H "Authorization: Bearer $token" -o "$WORKDIR/SHA256SUMS" >/dev/null 2>&1 || true
+      curl -fsSL "$SHA256SUMS_SIG_URL" -H "Authorization: Bearer $token" -o "$WORKDIR/SHA256SUMS.minisig" >/dev/null 2>&1 || true
+      if [ -s "$WORKDIR/SHA256SUMS" ] && [ -s "$WORKDIR/SHA256SUMS.minisig" ]; then
+        pubfile="$(mktemp)"
+        printf "%b\\n" "$MINISIGN_PUBLIC_KEY" > "$pubfile"
+        minisign -V -p "$pubfile" -m "$WORKDIR/SHA256SUMS" -x "$WORKDIR/SHA256SUMS.minisig" >/dev/null 2>&1 || fail "Assinatura inválida (SHA256SUMS)"
+        rm -f "$pubfile"
+      fi
+    fi
+
+    RELEASE_DIR="${INSTALL_ROOT}/releases/${VERSION}"
+    CURRENT_LINK="${INSTALL_ROOT}/current"
+    PREV_LINK=""
+    if [ -L "$CURRENT_LINK" ] || [ -e "$CURRENT_LINK" ]; then
+      PREV_LINK="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
+    fi
+
+    # Backup before changing anything. Default is schema-only (fast). Full backups can be enabled via env.
+    if [ -n "$PREV_LINK" ] && [ -d "$PREV_LINK/deploy" ]; then
+      set -a
+      # shellcheck disable=SC1090
+      . "$ENV_FILE"
+      set +a
+      BACKUP_DIR="${UPDATER_BACKUP_DIR:-${INSTALL_ROOT}/backups}"
+      BACKUP_MODE="${UPDATER_BACKUP_MODE:-schema}" # none|schema|full
+      BACKUP_KEEP="${UPDATER_BACKUP_KEEP:-10}" # number of snapshots to keep
+      SNAPSHOT_ROOT="${BACKUP_DIR}/snapshots"
+      mkdir -p "$SNAPSHOT_ROOT"
+      TS="$(date -u +%Y%m%dT%H%M%SZ)"
+      SNAPSHOT_DIR="${SNAPSHOT_ROOT}/${TS}"
+      mkdir -p "$SNAPSHOT_DIR"
+      if [ "$BACKUP_MODE" != "none" ]; then
+        for DBNAME in "${DINGITALPAY_PROD_DB:-dingitalpay_prod}"; do
+          (cd "$PREV_LINK/deploy" && docker compose --env-file "$ENV_FILE" -f compose.yml exec -T dingitalpay-postgres pg_dump --schema-only -U postgres "$DBNAME") > "${SNAPSHOT_DIR}/schema-${DBNAME}.sql" 2>/dev/null || true
+          if [ "$BACKUP_MODE" = "full" ]; then
+            (cd "$PREV_LINK/deploy" && docker compose --env-file "$ENV_FILE" -f compose.yml exec -T dingitalpay-postgres pg_dump -Fc -U postgres "$DBNAME") > "${SNAPSHOT_DIR}/full-${DBNAME}.dump" 2>/dev/null || true
+          fi
+        done
+      fi
+      # Retention (best-effort)
+      if [ -n "$BACKUP_KEEP" ] && [ "$BACKUP_KEEP" -gt 0 ] 2>/dev/null; then
+        ls -1t "$SNAPSHOT_ROOT" 2>/dev/null | awk "NR>${BACKUP_KEEP}" | xargs -r -I{} rm -rf "${SNAPSHOT_ROOT}/{}" 2>/dev/null || true
+      fi
+    fi
+
+    mkdir -p "$RELEASE_DIR"
+    tar -xzf "$ARCHIVE" -C "$RELEASE_DIR"
+    [ -f "$RELEASE_DIR/deploy/compose.yml" ] || fail "Release inválido: deploy/compose.yml não encontrado"
+    if ! grep -q "WEB_PORT" "$RELEASE_DIR/deploy/compose.yml"; then
+      fail "Release incompatível: compose.yml precisa usar WEB_PORT (porta configurável)"
+    fi
+    if grep -q "deploy-client/" "$RELEASE_DIR/deploy/compose.yml"; then
+      fail "Release incompatível: compose.yml referencia deploy-client/. Gere um release mais novo"
+    fi
+
+    # Link env into release deploy dir
+    [ -f "$ENV_FILE" ] || fail "Config não encontrada: $ENV_FILE"
+    ln -sfn "$ENV_FILE" "$RELEASE_DIR/deploy/.env"
+    updater_in_release=""
+    if [ -f "$RELEASE_DIR/deploy/ops/dingitalpay-updater" ]; then
+      updater_in_release="$RELEASE_DIR/deploy/ops/dingitalpay-updater"
+    else
+      candidate="$(ls -1 "$RELEASE_DIR/deploy/ops" 2>/dev/null | grep -E "updater$" | head -n1 || true)"
+      if [ -n "$candidate" ]; then
+        updater_in_release="$RELEASE_DIR/deploy/ops/$candidate"
+      fi
+    fi
+    if [ -n "$updater_in_release" ]; then
+      install -m 755 "$updater_in_release" /usr/local/bin/dingitalpay-updater >/dev/null 2>&1 || cp -f "$updater_in_release" /usr/local/bin/dingitalpay-updater || true
+      chmod 755 /usr/local/bin/dingitalpay-updater >/dev/null 2>&1 || true
+      if grep -q "^UPDATES_RUNNER_BIN=/opt/dingitalpay/current/deploy/ops/.*updater$" "$ENV_FILE" 2>/dev/null; then
+        sed -i "s|^UPDATES_RUNNER_BIN=/opt/dingitalpay/current/deploy/ops/.*updater$|UPDATES_RUNNER_BIN=/usr/local/bin/dingitalpay-updater|" "$ENV_FILE" || true
+      fi
+    fi
+
+    # Persist state for rollback (simple k=v file; no external deps)
+    if [ -n "$PREV_LINK" ]; then
+      umask 077
+      {
+        echo "previous=$PREV_LINK"
+        echo "next=$RELEASE_DIR"
+        echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      } > "$STATE_FILE" || true
+    fi
+
+    cd "$RELEASE_DIR/deploy"
+    DC_ARGS=()
+    if [ -n "$COMPOSE_PROJECT_NAME" ]; then
+      DC_ARGS+=(--project-name "$COMPOSE_PROJECT_NAME")
+    fi
+    PROFILE_ARGS=()
+    if [ "${DEPLOY_USE_TLS_PROFILE:-false}" = "true" ]; then
+      PROFILE_ARGS+=(--profile tls)
+    fi
+    if [ "${DEPLOY_USE_TLS_INTERNAL_PROFILE:-false}" = "true" ]; then
+      PROFILE_ARGS+=(--profile tls-internal)
+    fi
+    if [ "${DEPLOY_USE_RUNNER_PROFILE:-false}" = "true" ]; then
+      PROFILE_ARGS+=(--profile runner)
+    fi
+    log "APPLY: profiles tls=${DEPLOY_USE_TLS_PROFILE:-false} tls-internal=${DEPLOY_USE_TLS_INTERNAL_PROFILE:-false} runner=${DEPLOY_USE_RUNNER_PROFILE:-false}"
+
+    # Run migrations explicitly (so new migration files are applied even if api/web does not restart).
+    if ! docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --profile migrate --env-file "$ENV_FILE" -f compose.yml run --rm dingitalpay-migrate-prod; then
+      fail "Falha ao aplicar migrations"
+    fi
+    if ! docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --build; then
+      if [ -n "$PREV_LINK" ] && [ -d "$PREV_LINK/deploy" ]; then
+        (cd "$PREV_LINK/deploy" && docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --build) || true
+      fi
+      fail "Falha ao aplicar update"
+    fi
+    docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --force-recreate dingitalpay-api-prod dingitalpay-web >/dev/null 2>&1 \
+      || docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --build dingitalpay-api-prod dingitalpay-web >/dev/null 2>&1 \
+      || true
+
+    for _i in $(seq 1 20); do
+      if health_api; then
+        break
+      fi
+      sleep 1
+    done
+    if ! health_api; then
+      if [ -n "$PREV_LINK" ] && [ -d "$PREV_LINK/deploy" ]; then
+        (cd "$PREV_LINK/deploy" && docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --build) || true
+        (cd "$PREV_LINK/deploy" && docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --force-recreate dingitalpay-api-prod dingitalpay-web) >/dev/null 2>&1 || true
+      fi
+      fail "Healthcheck falhou após update (/api/health)"
+    fi
+    if ! health_web; then
+      if [ -n "$PREV_LINK" ] && [ -d "$PREV_LINK/deploy" ]; then
+        (cd "$PREV_LINK/deploy" && docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --build) || true
+        (cd "$PREV_LINK/deploy" && docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --force-recreate dingitalpay-api-prod dingitalpay-web) >/dev/null 2>&1 || true
+      fi
+      fail "Healthcheck falhou após update (web /)"
+    fi
+
+    # Switch current only after a successful update + healthcheck (atomic pointer update).
+    ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
+
+    printf "%s update applied version=%s\\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$VERSION" >>"$LOG_FILE" || true
+    log "OK"
+  '
+  fi
+
+  append_log "apply ok version=${version}"
+  log "OK: update aplicado (${version})"
+}
+
+rollback_update() {
+  load_env
+  resolve_deploy_profiles
+  validate_deploy_profiles
+  reconcile_disabled_proxy_services
+  [ -f "$STATE_FILE" ] || fail "Sem estado de update anterior (arquivo não encontrado)."
+  local prev=""
+  prev="$(sed -n 's/^previous=//p' "$STATE_FILE" | head -n1 || true)"
+  [ -n "$prev" ] || fail "Estado inválido (previous)."
+  [ -d "$prev/deploy" ] || fail "Release anterior inválido: $prev"
+  [ -f "$ENV_FILE" ] || fail "Config não encontrada: $ENV_FILE"
+  ln -sfn "$prev" "${INSTALL_ROOT}/current"
+  updater_in_prev=""
+  if [ -f "$prev/deploy/ops/dingitalpay-updater" ]; then
+    updater_in_prev="$prev/deploy/ops/dingitalpay-updater"
+  else
+    candidate="$(ls -1 "$prev/deploy/ops" 2>/dev/null | grep -E "updater$" | head -n1 || true)"
+    if [ -n "$candidate" ]; then
+      updater_in_prev="$prev/deploy/ops/$candidate"
+    fi
+  fi
+  if [ -n "$updater_in_prev" ]; then
+    install -m 755 "$updater_in_prev" /usr/local/bin/dingitalpay-updater >/dev/null 2>&1 || cp -f "$updater_in_prev" /usr/local/bin/dingitalpay-updater || true
+    chmod 755 /usr/local/bin/dingitalpay-updater >/dev/null 2>&1 || true
+  fi
+  DC_ARGS=()
+  if [ -n "${COMPOSE_PROJECT_NAME:-}" ]; then
+    DC_ARGS+=(--project-name "${COMPOSE_PROJECT_NAME}")
+  fi
+  PROFILE_ARGS=()
+  if [ "${DEPLOY_USE_TLS_PROFILE:-false}" = "true" ]; then
+    PROFILE_ARGS+=(--profile tls)
+  fi
+  if [ "${DEPLOY_USE_TLS_INTERNAL_PROFILE:-false}" = "true" ]; then
+    PROFILE_ARGS+=(--profile tls-internal)
+  fi
+  if [ "${DEPLOY_USE_RUNNER_PROFILE:-false}" = "true" ]; then
+    PROFILE_ARGS+=(--profile runner)
+  fi
+  (cd "$prev/deploy" && docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --build) || fail "Rollback falhou"
+  (cd "$prev/deploy" && docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --force-recreate dingitalpay-api-prod dingitalpay-web) >/dev/null 2>&1 \
+    || (cd "$prev/deploy" && docker compose "${DC_ARGS[@]}" "${PROFILE_ARGS[@]}" --env-file "$ENV_FILE" -f compose.yml up -d --build dingitalpay-api-prod dingitalpay-web) >/dev/null 2>&1 \
+    || true
+  append_log "rollback ok to=$(basename "$prev")"
+  log "OK: rollback aplicado para $(basename "$prev")"
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  configure)
+    if [ "${1:-}" != "--token" ] || [ -z "${2:-}" ]; then
+      fail "Uso: dingitalpay-updater configure --token SEU_TOKEN"
+    fi
+    configure_token "$2"
+    ;;
+  status)
+    load_env
+    v="$(current_version || true)"
+    if get_token >/dev/null 2>&1; then
+      log "token: configured"
+    else
+      log "token: not_configured"
+    fi
+    log "current: ${v:-unknown}"
+    ;;
+  check)
+    check_updates
+    ;;
+  plan)
+    if [ "${1:-}" != "--version" ] || [ -z "${2:-}" ]; then
+      fail "Uso: dingitalpay-updater plan --version vX.Y.Z [--force]"
+    fi
+    force="false"
+    if [ "${3:-}" = "--force" ]; then force="true"; fi
+    plan_update "$2" "$force"
+    ;;
+  apply)
+    if [ "${1:-}" != "--version" ] || [ -z "${2:-}" ]; then
+      fail "Uso: dingitalpay-updater apply --version vX.Y.Z [--force]"
+    fi
+    force="false"
+    if [ "${3:-}" = "--force" ]; then force="true"; fi
+    apply_update "$2" "$force"
+    ;;
+  rollback)
+    rollback_update
+    ;;
+  *)
+    cat >&2 <<EOF
+DingitalPay Updater
+
+Usage:
+  dingitalpay-updater configure --token SEU_TOKEN
+  dingitalpay-updater status
+  dingitalpay-updater check
+  dingitalpay-updater plan --version vX.Y.Z [--force]
+  dingitalpay-updater apply --version vX.Y.Z [--force]
+  dingitalpay-updater rollback
+
+Options:
+  --install-root /opt/dingitalpay
+  --product-key  dingitalpay-platform
+EOF
+    exit 2
+    ;;
+esac

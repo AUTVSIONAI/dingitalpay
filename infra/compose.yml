@@ -1,0 +1,125 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    container_name: dingitalpay-postgres
+    hostname: dingitalpay-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      DINGITALPAY_MIGRATOR_PASSWORD: ${DINGITALPAY_MIGRATOR_PASSWORD}
+      DINGITALPAY_APP_PASSWORD: ${DINGITALPAY_APP_PASSWORD}
+      DINGITALPAY_PROD_DB: ${DINGITALPAY_PROD_DB}
+      DINGITALPAY_DEMO_DB: ${DINGITALPAY_DEMO_DB}
+      DINGITALPAY_PROVISIONING_DB: ${DINGITALPAY_PROVISIONING_DB}
+    volumes:
+      - dingitalpay-postgres-data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      dingitalpay:
+        aliases:
+          - dingitalpay-postgres
+
+  api_prod:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    container_name: dingitalpay-api-prod
+    hostname: dingitalpay-api-prod
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      PGHOST: dingitalpay-postgres
+      PGPORT: 5432
+      PGUSER: dingitalpay_app
+      PGPASSWORD: ${DINGITALPAY_APP_PASSWORD}
+      PGDATABASE: ${DINGITALPAY_PROD_DB}
+      PUBLIC_BASE_URL: ${WEB_URL}
+      MASTER_KEY: ${MASTER_KEY}
+      PROVISIONING_BASE_URL: ${PROVISIONING_BASE_URL}
+    expose:
+      - "4000"
+    networks:
+      dingitalpay:
+        aliases:
+          - dingitalpay-api-prod
+
+  api_demo:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    container_name: dingitalpay-api-demo
+    hostname: dingitalpay-api-demo
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      PGHOST: dingitalpay-postgres
+      PGPORT: 5432
+      PGUSER: dingitalpay_app
+      PGPASSWORD: ${DINGITALPAY_APP_PASSWORD}
+      PGDATABASE: ${DINGITALPAY_DEMO_DB}
+      PUBLIC_BASE_URL: ${DEMO_WEB_URL}
+      MASTER_KEY: ${MASTER_KEY}
+      PROVISIONING_BASE_URL: ${PROVISIONING_BASE_URL}
+      DEMO_OPEN_ACCESS: ${DEMO_OPEN_ACCESS}
+    expose:
+      - "4000"
+    networks:
+      dingitalpay:
+        aliases:
+          - dingitalpay-api-demo
+
+  migrate_prod:
+    image: postgres:16
+    profiles:
+      - migrate
+    depends_on:
+      - postgres
+    container_name: dingitalpay-migrate-prod
+    environment:
+      PGHOST: dingitalpay-postgres
+      PGPORT: 5432
+      PGUSER: dingitalpay_migrator
+      PGPASSWORD: ${DINGITALPAY_MIGRATOR_PASSWORD}
+      PGDATABASE: ${DINGITALPAY_PROD_DB}
+      MIGRATIONS_DIR: /migrations
+    volumes:
+      - ../db/migrations:/migrations:ro
+      - ../db/tools/migrate.sh:/migrate.sh:ro
+    entrypoint: ["/bin/bash", "/migrate.sh"]
+    networks:
+      - dingitalpay
+
+  migrate_demo:
+    image: postgres:16
+    profiles:
+      - migrate
+    depends_on:
+      - postgres
+    container_name: dingitalpay-migrate-demo
+    environment:
+      PGHOST: dingitalpay-postgres
+      PGPORT: 5432
+      PGUSER: dingitalpay_migrator
+      PGPASSWORD: ${DINGITALPAY_MIGRATOR_PASSWORD}
+      PGDATABASE: ${DINGITALPAY_DEMO_DB}
+      MIGRATIONS_DIR: /migrations
+    volumes:
+      - ../db/migrations:/migrations:ro
+      - ../db/tools/migrate.sh:/migrate.sh:ro
+    entrypoint: ["/bin/bash", "/migrate.sh"]
+    networks:
+      - dingitalpay
+
+volumes:
+  dingitalpay-postgres-data:
+
+networks:
+  dingitalpay:

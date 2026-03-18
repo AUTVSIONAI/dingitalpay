@@ -1,0 +1,309 @@
+/* Google Fonts loaded via index.html preload for non-blocking render */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 220 25% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 10%;
+
+    --primary: 224 76% 48%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 215 20% 95%;
+    --secondary-foreground: 220 25% 10%;
+
+    --muted: 215 20% 95%;
+    --muted-foreground: 215 15% 47%;
+
+    --accent: 215 20% 95%;
+    --accent-foreground: 220 25% 10%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 72% 29%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --info: 199 89% 48%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 214 20% 90%;
+    --input: 214 20% 90%;
+    --ring: 224 76% 48%;
+
+    --radius: 0.5rem;
+    --sidebar-surface: 210 20% 95%;
+
+    --sidebar-bg: 222 47% 11%;
+    --sidebar-fg: 215 20% 75%;
+    --sidebar-fg-active: 0 0% 100%;
+    --sidebar-accent: 224 76% 48%;
+    --sidebar-border: 222 30% 18%;
+    --sidebar-hover: 222 35% 16%;
+
+    --sidebar-background: 222 47% 11%;
+    --sidebar-foreground: 215 20% 75%;
+    --sidebar-primary: 224 76% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 35% 16%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 222 30% 18%;
+    --sidebar-ring: 224 76% 48%;
+
+    --chart-1: 224 76% 48%;
+    --chart-2: 142 72% 29%;
+    --chart-3: 38 92% 50%;
+    --chart-4: 199 89% 48%;
+    --chart-5: 0 72% 51%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(224, 76%, 48%), hsl(224, 76%, 38%));
+    --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+    --shadow-elevated: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+  }
+
+  .dark {
+    --background: 222 47% 6%;
+    --foreground: 210 40% 98%;
+
+    --card: 222 47% 9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222 47% 9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 224 76% 55%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 222 30% 15%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 222 30% 15%;
+    --muted-foreground: 215 20% 55%;
+
+    --accent: 222 30% 15%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62% 40%;
+    --destructive-foreground: 210 40% 98%;
+
+    --success: 142 72% 35%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 55%;
+    --warning-foreground: 0 0% 100%;
+
+    --info: 199 89% 55%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 222 30% 18%;
+    --input: 222 30% 18%;
+    --ring: 224 76% 55%;
+
+    --sidebar-surface: var(--background);
+    --sidebar-bg: 222 47% 6%;
+    --sidebar-fg: 215 20% 60%;
+    --sidebar-fg-active: 0 0% 100%;
+    --sidebar-accent: 224 76% 55%;
+    --sidebar-border: 222 30% 12%;
+    --sidebar-hover: 222 35% 10%;
+
+    --sidebar-background: 222 47% 6%;
+    --sidebar-foreground: 215 20% 60%;
+    --sidebar-primary: 224 76% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 222 35% 10%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 222 30% 12%;
+    --sidebar-ring: 224 76% 55%;
+
+    --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.2);
+    --shadow-elevated: 0 4px 6px -1px rgb(0 0 0 / 0.3);
+  }
+
+  /* ── Checkout theme scope ──
+     Overrides semantic tokens ONLY inside [data-checkout-theme].
+     This isolates the checkout page from the global dark/light mode. */
+  [data-checkout-theme="light"] {
+    --background: 240 5% 96%;
+    --foreground: 240 6% 3%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 6% 3%;
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 46%;
+    --border: 240 6% 90%;
+    --input: 240 6% 90%;
+    --accent: 240 5% 96%;
+    --accent-foreground: 240 6% 3%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 6% 3%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 6% 3%;
+    color-scheme: light;
+  }
+
+  [data-checkout-theme="dark"] {
+    --background: 240 10% 4%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 7%;
+    --card-foreground: 0 0% 98%;
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 5% 65%;
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --accent: 240 4% 16%;
+    --accent-foreground: 0 0% 98%;
+    --popover: 240 10% 7%;
+    --popover-foreground: 0 0% 98%;
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 0 0% 98%;
+    color-scheme: dark;
+  }
+}
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: hsl(var(--border));
+  }
+
+  html {
+    height: 100vh; /* fallback */
+    height: 100dvh;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    min-height: 100vh; /* fallback */
+    min-height: 100dvh;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/30;
+  }
+}
+
+@layer utilities {
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+  .shadow-elevated {
+    box-shadow: var(--shadow-elevated);
+  }
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ─── Neon / Gradient Mode (somente visual interno: gradiente + texto) ─── */
+.neon-mode .bg-primary:not([data-state="unchecked"]):not([role="switch"]),
+.neon-mode [data-state="checked"].bg-primary:not([role="switch"]),
+.neon-mode [class*="bg-primary"]:not([class*="bg-primary/"]):not([class*="bg-primary-foreground"]):not([data-state="unchecked"]):not([role="switch"]) {
+  background: linear-gradient(135deg, var(--neon-from), var(--neon-to)) !important;
+  background-clip: padding-box !important;
+}
+
+/* Switch: aplica gradiente mantendo layout original */
+.neon-mode [role="switch"][data-state="checked"] {
+  background: linear-gradient(135deg, var(--neon-from), var(--neon-to)) !important;
+}
+
+.neon-mode .border-primary {
+  border-color: var(--neon-from) !important;
+}
+
+.neon-mode .text-primary {
+  background: linear-gradient(135deg, var(--neon-from), var(--neon-to));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.neon-mode .ring-primary,
+.neon-mode .ring-ring {
+  --tw-ring-color: var(--neon-from);
+}
+
+/* ─── Glow Mode ─── */
+.glow-mode .bg-primary {
+  box-shadow: 0 4px 16px -2px hsl(var(--glow-color) / 0.5), 0 2px 8px -1px hsl(var(--glow-color) / 0.3) !important;
+}
+
+.glow-mode .bg-primary:hover {
+  box-shadow: 0 6px 22px -2px hsl(var(--glow-color) / 0.6), 0 3px 10px -1px hsl(var(--glow-color) / 0.35) !important;
+}
+
+.glow-mode .bg-destructive {
+  box-shadow: 0 4px 16px -2px hsl(0 72% 51% / 0.45) !important;
+}
+
+.glow-mode .bg-success {
+  box-shadow: 0 4px 16px -2px hsl(142 72% 35% / 0.45) !important;
+}
+
+.glow-mode .bg-warning {
+  box-shadow: 0 4px 16px -2px hsl(38 92% 50% / 0.45) !important;
+}
+
+.glow-mode .bg-info {
+  box-shadow: 0 4px 16px -2px hsl(199 89% 48% / 0.45) !important;
+}
+
+.glow-mode .border-primary {
+  box-shadow: 0 0 12px -2px hsl(var(--glow-color) / 0.35) !important;
+}
+
+.glow-mode [role="progressbar"] > div {
+  box-shadow: 0 0 10px 1px hsl(var(--glow-color) / 0.35) !important;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes counter-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-360deg); }
+}

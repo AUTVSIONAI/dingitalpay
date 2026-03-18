@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Plataforma</title>
+    <meta name="description" content="Gateway de pagamento preferido dos infoprodutores!">
+    <meta name="author" content="DingitalPay" />
+
+    <!-- Preconnect to critical origins -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://mpc-prod-17-s6uit34pua-wl.a.run.app" crossorigin>
+    <link rel="dns-prefetch" href="https://mpc-prod-17-s6uit34pua-wl.a.run.app">
+
+    <!-- Inter font — loaded asynchronously to avoid render blocking -->
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"></noscript>
+
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://storage.googleapis.com/gpt-engineer-file-uploads/FpjTHmet7lUr0X0s8ZHRwi9rNpQ2/social-images/social-1772298383941-logo-insta.webp">
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@dingitalpay" />
+    <meta name="twitter:image" content="https://storage.googleapis.com/gpt-engineer-file-uploads/FpjTHmet7lUr0X0s8ZHRwi9rNpQ2/social-images/social-1772298383941-logo-insta.webp">
+    <meta property="og:title" content="Plataforma">
+    <meta name="twitter:title" content="Plataforma">
+    <meta property="og:description" content="Gateway de pagamento preferido dos infoprodutores!">
+    <meta name="twitter:description" content="Gateway de pagamento preferido dos infoprodutores!">
+    <script>
+      (function () {
+        var fallback = "Plataforma";
+        var setTitle = function (name) {
+          var platformName = String(name || "").trim() || fallback;
+          document.title = platformName;
+          var ogTitle = document.querySelector('meta[property="og:title"]');
+          if (ogTitle) ogTitle.setAttribute("content", platformName);
+          var twitterTitle = document.querySelector('meta[name="twitter:title"]');
+          if (twitterTitle) twitterTitle.setAttribute("content", platformName);
+        };
+        setTitle(fallback);
+        fetch("/api/public/platform-settings", { credentials: "include" })
+          .then(function (res) { return res.ok ? res.json() : null; })
+          .then(function (json) { setTitle(json && json.data && json.data.platform_name); })
+          .catch(function () {});
+      })();
+    </script>
+
+	</head>
+
+	  <body>
+	    <div id="root"></div>
+	    <script type="module" src="/src/main.tsx"></script>
+	  </body>
+	</html>

@@ -1,0 +1,11 @@
+export const demoProducts = [] as any[];
+export const demoCourse = null as any;
+export const demoCourseModules = [] as any[];
+export const demoCourseLessons = [] as any[];
+export const demoProductOffers = [] as any[];
+export const demoCheckoutConfigs = [] as any[];
+export const demoUpsellConfigs = [] as any[];
+export const demoDeliveryConfigs = [] as any[];
+export const demoProductDomains = [] as any[];
+export const demoProductCoupons = [] as any[];
+export const demoProductPixels = [] as any[];

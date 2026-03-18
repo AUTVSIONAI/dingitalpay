@@ -1,0 +1,191 @@
+services:
+  dingitalpay-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      DINGITALPAY_MIGRATOR_PASSWORD: ${DINGITALPAY_MIGRATOR_PASSWORD:?DINGITALPAY_MIGRATOR_PASSWORD is required}
+      DINGITALPAY_APP_PASSWORD: ${DINGITALPAY_APP_PASSWORD:?DINGITALPAY_APP_PASSWORD is required}
+      DINGITALPAY_PROD_DB: ${DINGITALPAY_PROD_DB:-dingitalpay_prod}
+      DINGITALPAY_DEMO_DB: ${DINGITALPAY_DEMO_DB:-dingitalpay_demo}
+      DINGITALPAY_PROVISIONING_DB: ${DINGITALPAY_PROVISIONING_DB:-dingitalpay_provisioning}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  dingitalpay-migrate-prod:
+    profiles: ["migrate"]
+    image: postgres:16-alpine
+    depends_on:
+      dingitalpay-postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: dingitalpay-postgres
+      PGUSER: dingitalpay_migrator
+      PGPASSWORD: ${DINGITALPAY_MIGRATOR_PASSWORD:?DINGITALPAY_MIGRATOR_PASSWORD is required}
+      PGDATABASE: ${DINGITALPAY_PROD_DB:-dingitalpay_prod}
+      MIGRATIONS_DIR: /migrations
+    volumes:
+      - ../db/migrations:/migrations:ro
+      - ../db/tools/migrate.sh:/usr/local/bin/migrate.sh:ro
+    entrypoint: ["/usr/local/bin/migrate.sh"]
+
+  dingitalpay-api-prod:
+    build:
+      context: ../api
+    restart: unless-stopped
+    depends_on:
+      dingitalpay-postgres:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      PGHOST: dingitalpay-postgres
+      PGPORT: 5432
+      PGUSER: dingitalpay_app
+      PGPASSWORD: ${DINGITALPAY_APP_PASSWORD:?DINGITALPAY_APP_PASSWORD is required}
+      PGDATABASE: ${DINGITALPAY_PROD_DB:-dingitalpay_prod}
+      PUBLIC_BASE_URL: ${PROD_PUBLIC_BASE_URL:?PROD_PUBLIC_BASE_URL is required}
+      MASTER_KEY: ${MASTER_KEY:?MASTER_KEY is required}
+      COOKIE_NAME: dingitalpay_session
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      COOKIE_SAMESITE: "lax"
+      SESSION_DAYS: 30
+      INTERNAL_WEBHOOK_TOKEN: ${INTERNAL_WEBHOOK_TOKEN:-}
+      PROVISIONING_BASE_URL: ${PROVISIONING_BASE_URL:-https://api.dingitalpay.com/provisioning}
+      UPDATES_TOKEN_FILE: /data/config/update_token
+      UPDATES_RUNNER_INSTALL_ROOT: ${INSTALL_ROOT:-/opt/dingitalpay}
+      UPDATES_RUNNER_ENABLED: ${UPDATES_RUNNER_ENABLED:-true}
+    volumes:
+      - api_uploads_prod:/data/uploads
+      - ${INSTALL_ROOT:-/opt/dingitalpay}/config:/data/config
+      - ${INSTALL_ROOT:-/opt/dingitalpay}:${INSTALL_ROOT:-/opt/dingitalpay}:ro
+
+  # Default worker for email outbox/campaigns.
+  # Starts by default so SMTP-driven automations work immediately after installation.
+  dingitalpay-email-worker-prod:
+    build:
+      context: ../api
+      dockerfile: Dockerfile.runner
+    restart: unless-stopped
+    depends_on:
+      dingitalpay-postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: dingitalpay-postgres
+      PGPORT: 5432
+      PGUSER: dingitalpay_app
+      PGPASSWORD: ${DINGITALPAY_APP_PASSWORD:?DINGITALPAY_APP_PASSWORD is required}
+      PGDATABASE: ${DINGITALPAY_PROD_DB:-dingitalpay_prod}
+      PUBLIC_BASE_URL: ${PROD_PUBLIC_BASE_URL:?PROD_PUBLIC_BASE_URL is required}
+      MASTER_KEY: ${MASTER_KEY:?MASTER_KEY is required}
+      COOKIE_NAME: dingitalpay_session
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      COOKIE_SAMESITE: "lax"
+      SESSION_DAYS: 30
+      INTERNAL_WEBHOOK_TOKEN: ${INTERNAL_WEBHOOK_TOKEN:-}
+      PROVISIONING_BASE_URL: ${PROVISIONING_BASE_URL:-https://api.dingitalpay.com/provisioning}
+      UPDATES_TOKEN_FILE: /data/config/update_token
+      EMAIL_WORKER_ENABLED: ${EMAIL_WORKER_ENABLED:-true}
+      UPDATES_RUNNER_ENABLED: "false"
+      SMTP_ALLOW_INSECURE_TLS: ${SMTP_ALLOW_INSECURE_TLS:-false}
+    volumes:
+      - ${INSTALL_ROOT:-/opt/dingitalpay}/config:/data/config
+
+  # Optional server-side runner for updates.
+  # Security note: it mounts the Docker socket to manage the stack; keep it behind a profile.
+  dingitalpay-updates-runner-prod:
+    profiles: ["runner"]
+    build:
+      context: ../api
+      dockerfile: Dockerfile.runner
+    restart: unless-stopped
+    depends_on:
+      dingitalpay-postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: dingitalpay-postgres
+      PGPORT: 5432
+      PGUSER: dingitalpay_app
+      PGPASSWORD: ${DINGITALPAY_APP_PASSWORD:?DINGITALPAY_APP_PASSWORD is required}
+      PGDATABASE: ${DINGITALPAY_PROD_DB:-dingitalpay_prod}
+      PUBLIC_BASE_URL: ${PROD_PUBLIC_BASE_URL:?PROD_PUBLIC_BASE_URL is required}
+      MASTER_KEY: ${MASTER_KEY:?MASTER_KEY is required}
+      COOKIE_NAME: dingitalpay_session
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      COOKIE_SAMESITE: "lax"
+      SESSION_DAYS: 30
+      INTERNAL_WEBHOOK_TOKEN: ${INTERNAL_WEBHOOK_TOKEN:-}
+      PROVISIONING_BASE_URL: ${PROVISIONING_BASE_URL:-https://api.dingitalpay.com/provisioning}
+      UPDATES_TOKEN_FILE: /data/config/update_token
+
+      # Updates runner enabled by default for /admin/updates.
+      UPDATES_RUNNER_ENABLED: ${UPDATES_RUNNER_ENABLED:-true}
+      EMAIL_WORKER_ENABLED: "false"
+      DINGITALPAY_UPDATER_RUNNING_IN_RUNNER: "true"
+      UPDATES_RUNNER_BIN: ${UPDATES_RUNNER_BIN:-/usr/local/bin/dingitalpay-updater}
+      UPDATES_RUNNER_INSTALL_ROOT: ${UPDATES_RUNNER_INSTALL_ROOT:-/opt/dingitalpay}
+      UPDATES_RUNNER_PRODUCT_KEY: ${UPDATES_RUNNER_PRODUCT_KEY:-dingitalpay-platform}
+      UPDATES_RUNNER_TIMEOUT_SECONDS: ${UPDATES_RUNNER_TIMEOUT_SECONDS:-2700}
+      UPDATER_INTERNAL_API_HEALTH_URL: http://dingitalpay-api-prod:4000/api/health
+      UPDATER_INTERNAL_WEB_HEALTH_URL: http://dingitalpay-web/
+      SMTP_ALLOW_INSECURE_TLS: ${SMTP_ALLOW_INSECURE_TLS:-false}
+    volumes:
+      - ${INSTALL_ROOT:-/opt/dingitalpay}/config:/data/config
+      - ${INSTALL_ROOT:-/opt/dingitalpay}:${INSTALL_ROOT:-/opt/dingitalpay}
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  dingitalpay-web:
+    build:
+      context: ..
+      dockerfile: deploy-client/web/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - dingitalpay-api-prod
+    environment:
+      APP_HOST: ${APP_HOST:?APP_HOST is required}
+    ports:
+      - "${WEB_PORT:-80}:80"
+
+  dingitalpay-caddy:
+    image: caddy:2.8-alpine
+    profiles: ["tls"]
+    restart: unless-stopped
+    depends_on:
+      - dingitalpay-web
+    environment:
+      APP_HOST: ${APP_HOST:?APP_HOST is required}
+      TLS_EMAIL: ${TLS_EMAIL:-}
+    ports:
+      - "${TLS_HTTP_PORT:-80}:80"
+      - "${TLS_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  dingitalpay-caddy-internal:
+    image: caddy:2.8-alpine
+    profiles: ["tls-internal"]
+    restart: unless-stopped
+    depends_on:
+      - dingitalpay-web
+    environment:
+      APP_HOST: ${APP_HOST:?APP_HOST is required}
+    ports:
+      - "${TLS_HTTP_PORT:-80}:80"
+      - "${TLS_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./caddy/Caddyfile.internal:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  api_uploads_prod:
+  caddy_data:
+  caddy_config:

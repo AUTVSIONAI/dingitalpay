@@ -1,0 +1,8 @@
+{
+  # For local/staging validation only (no ACME).
+}
+
+{$APP_HOST} {
+  tls internal
+  reverse_proxy dingitalpay-web:80
+}
