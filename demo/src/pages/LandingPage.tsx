@@ -360,13 +360,35 @@ const LandingPage = () => {
                   <CardTitle className="text-base">Vendas</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="h-9 rounded-lg border border-primary/10 bg-background/40" />
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="h-16 rounded-lg bg-primary/10" />
-                    <div className="h-16 rounded-lg bg-primary/10" />
-                    <div className="h-16 rounded-lg bg-primary/10" />
+                  <div className="flex items-center justify-between rounded-lg border border-primary/10 bg-background/40 px-3 py-2">
+                    <div className="text-sm font-semibold">Resumo</div>
+                    <div className="text-xs text-muted-foreground">Demo</div>
                   </div>
-                  <div className="h-24 rounded-lg bg-primary/10" />
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-lg bg-primary/10 p-3">
+                      <div className="text-xs text-muted-foreground">Total</div>
+                      <div className="mt-1 text-base font-semibold">R$ 8.210</div>
+                    </div>
+                    <div className="rounded-lg bg-primary/10 p-3">
+                      <div className="text-xs text-muted-foreground">Pedidos</div>
+                      <div className="mt-1 text-base font-semibold">52</div>
+                    </div>
+                    <div className="rounded-lg bg-primary/10 p-3">
+                      <div className="text-xs text-muted-foreground">Taxa</div>
+                      <div className="mt-1 text-base font-semibold">3,1%</div>
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-primary/10 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-xs text-muted-foreground">Últimos 7 dias</div>
+                      <div className="text-xs text-muted-foreground">+12%</div>
+                    </div>
+                    <div className="flex h-16 items-end gap-1">
+                      {[18, 30, 24, 36, 44, 40, 52].map((h) => (
+                        <div key={h} className="flex-1 rounded-sm bg-primary/25" style={{ height: `${h}%` }} />
+                      ))}
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
               <Card className="border-primary/10">
@@ -374,13 +396,32 @@ const LandingPage = () => {
                   <CardTitle className="text-base">Checkout</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="h-9 rounded-lg border border-primary/10 bg-background/40" />
-                  <div className="h-24 rounded-lg bg-primary/10" />
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="h-10 rounded-lg bg-primary/10" />
-                    <div className="h-10 rounded-lg bg-primary/10" />
+                  <div className="rounded-lg border border-primary/10 bg-background/40 px-3 py-2">
+                    <div className="text-sm font-semibold">Oferta: Demo</div>
+                    <div className="text-xs text-muted-foreground">Simulação do fluxo</div>
                   </div>
-                  <div className="h-10 rounded-lg bg-primary/15" />
+                  <div className="rounded-lg bg-primary/10 p-3">
+                    <div className="flex items-center justify-between text-sm">
+                      <div className="text-muted-foreground">Subtotal</div>
+                      <div className="font-semibold">R$ 197,00</div>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-sm">
+                      <div className="text-muted-foreground">Taxas</div>
+                      <div className="font-semibold">R$ 0,00</div>
+                    </div>
+                    <div className="mt-3 h-px bg-primary/10" />
+                    <div className="mt-3 flex items-center justify-between text-sm">
+                      <div className="text-muted-foreground">Total</div>
+                      <div className="text-base font-semibold">R$ 197,00</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-lg bg-primary/10 px-3 py-2 text-xs text-muted-foreground">Pix</div>
+                    <div className="rounded-lg bg-primary/10 px-3 py-2 text-xs text-muted-foreground">Cartão</div>
+                  </div>
+                  <div className="rounded-lg bg-primary/15 px-3 py-2 text-center text-sm font-semibold text-primary">
+                    Finalizar compra
+                  </div>
                 </CardContent>
               </Card>
               <Card className="border-primary/10">
@@ -388,14 +429,30 @@ const LandingPage = () => {
                   <CardTitle className="text-base">Membros</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="h-16 rounded-lg bg-primary/10" />
-                    <div className="h-16 rounded-lg bg-primary/10" />
-                    <div className="h-16 rounded-lg bg-primary/10" />
+                  <div className="rounded-lg border border-primary/10 bg-background/40 px-3 py-2">
+                    <div className="text-sm font-semibold">Acesso</div>
+                    <div className="text-xs text-muted-foreground">Entrega de conteúdo</div>
                   </div>
-                  <div className="h-9 rounded-lg bg-primary/10" />
-                  <div className="h-9 rounded-lg bg-primary/10" />
-                  <div className="h-9 rounded-lg bg-primary/10" />
+                  <div className="grid gap-2">
+                    {[
+                      { title: "Introdução", progress: 100 },
+                      { title: "Módulo 1", progress: 55 },
+                      { title: "Módulo 2", progress: 10 },
+                    ].map((item) => (
+                      <div key={item.title} className="rounded-lg bg-primary/10 p-3">
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-semibold">{item.title}</div>
+                          <div className="text-xs text-muted-foreground">{item.progress}%</div>
+                        </div>
+                        <div className="mt-2 h-1.5 w-full rounded-full bg-primary/10">
+                          <div
+                            className="h-1.5 rounded-full bg-primary/40"
+                            style={{ width: `${item.progress}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </CardContent>
               </Card>
             </div>

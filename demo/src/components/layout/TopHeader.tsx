@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/button";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { motion, AnimatePresence } from "framer-motion";
 
 interface TopHeaderProps {
   breadcrumbs: BreadcrumbItem[];
@@ -131,35 +130,30 @@ const TopHeader = ({ breadcrumbs, title, leadingAction }: TopHeaderProps) => {
               {notifications.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-8 text-center">Nenhuma notificação recente.</p>
               ) : (
-                <AnimatePresence initial={false}>
+                <>
                   {notifications.map((n) => (
-                    <motion.div
+                    <div
                       key={n.id}
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0, marginTop: 0, marginBottom: 0 }}
-                      transition={{ duration: 0.2 }}
+                      className={`group flex items-start gap-3 px-4 py-3 border-b border-border/50 last:border-0 transition-colors hover:bg-muted/50 ${n.read ? "opacity-60" : ""}`}
                     >
-                      <div className={`group flex items-start gap-3 px-4 py-3 border-b border-border/50 last:border-0 transition-colors hover:bg-muted/50 ${n.read ? "opacity-60" : ""}`}>
-                        <div className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${n.read ? "bg-muted-foreground/30" : "bg-primary"}`} />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm text-foreground leading-snug">{n.text}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">{formatRelativeTime(n.created_at)}</p>
-                        </div>
-                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                          {!n.read && (
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => markAsRead(n.id)} title="Marcar como lida">
-                              <Check className="h-3.5 w-3.5 text-muted-foreground" />
-                            </Button>
-                          )}
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeNotification(n.id)} title="Remover">
-                            <X className="h-3.5 w-3.5 text-muted-foreground" />
-                          </Button>
-                        </div>
+                      <div className={`mt-1.5 h-2 w-2 rounded-full shrink-0 ${n.read ? "bg-muted-foreground/30" : "bg-primary"}`} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm text-foreground leading-snug">{n.text}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{formatRelativeTime(n.created_at)}</p>
                       </div>
-                    </motion.div>
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        {!n.read && (
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => markAsRead(n.id)} title="Marcar como lida">
+                            <Check className="h-3.5 w-3.5 text-muted-foreground" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeNotification(n.id)} title="Remover">
+                          <X className="h-3.5 w-3.5 text-muted-foreground" />
+                        </Button>
+                      </div>
+                    </div>
                   ))}
-                </AnimatePresence>
+                </>
               )}
             </div>
           </PopoverContent>

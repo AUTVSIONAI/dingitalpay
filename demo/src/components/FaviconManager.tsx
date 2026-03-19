@@ -20,11 +20,12 @@ export default function FaviconManager() {
   const { data } = usePlatformSettings();
 
   useEffect(() => {
-    const href = String(data?.faviconUrl || "/favicon.ico").trim() || "/favicon.ico";
+    const configured = String(data?.faviconUrl || "").trim();
+    const existing = document.head?.querySelector('link[rel="icon"]')?.getAttribute("href") || "";
+    const href = configured || String(existing).trim() || "/favicon.ico";
     upsertLink("icon", href);
     upsertLink("shortcut icon", href);
   }, [data?.faviconUrl]);
 
   return null;
 }
-

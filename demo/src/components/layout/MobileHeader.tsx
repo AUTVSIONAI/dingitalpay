@@ -9,7 +9,6 @@ import {
 } from "@/components/ui/popover";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { motion, AnimatePresence } from "framer-motion";
 
 interface MobileHeaderProps {
   title: string;
@@ -103,35 +102,30 @@ const MobileHeader = ({ title }: MobileHeaderProps) => {
               {notifications.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-6 text-center">Nenhuma notificação recente.</p>
               ) : (
-                <AnimatePresence initial={false}>
+                <>
                   {notifications.map((n) => (
-                    <motion.div
+                    <div
                       key={n.id}
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.2 }}
+                      className={`group flex items-start gap-2 px-3 py-2.5 border-b border-border/50 last:border-0 transition-colors hover:bg-muted/50 ${n.read ? "opacity-60" : ""}`}
                     >
-                      <div className={`group flex items-start gap-2 px-3 py-2.5 border-b border-border/50 last:border-0 transition-colors hover:bg-muted/50 ${n.read ? "opacity-60" : ""}`}>
-                        <div className={`mt-1 h-2 w-2 rounded-full shrink-0 ${n.read ? "bg-muted-foreground/30" : "bg-primary"}`} />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs text-foreground leading-snug">{n.text}</p>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">{formatRelativeTime(n.created_at)}</p>
-                        </div>
-                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                          {!n.read && (
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => markAsRead(n.id)}>
-                              <Check className="h-3 w-3 text-muted-foreground" />
-                            </Button>
-                          )}
-                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeNotification(n.id)}>
-                            <X className="h-3 w-3 text-muted-foreground" />
-                          </Button>
-                        </div>
+                      <div className={`mt-1 h-2 w-2 rounded-full shrink-0 ${n.read ? "bg-muted-foreground/30" : "bg-primary"}`} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs text-foreground leading-snug">{n.text}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">{formatRelativeTime(n.created_at)}</p>
                       </div>
-                    </motion.div>
+                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        {!n.read && (
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => markAsRead(n.id)}>
+                            <Check className="h-3 w-3 text-muted-foreground" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeNotification(n.id)}>
+                          <X className="h-3 w-3 text-muted-foreground" />
+                        </Button>
+                      </div>
+                    </div>
                   ))}
-                </AnimatePresence>
+                </>
               )}
             </div>
           </PopoverContent>
