@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { getBaseUrl } from "@/lib/get-base-url";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -56,12 +56,19 @@ type RegisterFormValues = z.infer<typeof registerSchema>;
 
 const BuyerRegister = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const { signIn, signUp } = useAuth();
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const { requireAcceptance } = useTermsSettings();
   const turnstileSiteKey = getTurnstileSiteKey();
+  const safeReturnTo = useMemo(() => {
+    const value = new URLSearchParams(location.search).get("returnTo");
+    if (!value) return null;
+    if (!value.startsWith("/") || value.startsWith("//")) return null;
+    return value;
+  }, [location.search]);
 
   const form = useForm<RegisterFormValues>({
     resolver: zodResolver(registerSchema),
@@ -70,7 +77,8 @@ const BuyerRegister = () => {
   });
 
   const onSubmit = async (values: RegisterFormValues) => {
-    const redirectTo = `${getBaseUrl()}/auth/email-verified?login=/buyer/login`;
+    const loginPath = safeReturnTo ? `/buyer/login?returnTo=${encodeURIComponent(safeReturnTo)}` : "/buyer/login";
+    const redirectTo = `${getBaseUrl()}/auth/email-verified?login=${encodeURIComponent(loginPath)}`;
     const { error, requiresEmailVerification } = await signUp(
       values.email,
       values.password,
@@ -87,7 +95,7 @@ const BuyerRegister = () => {
 
     if (requiresEmailVerification) {
       toast({ title: "Conta criada!", description: "Verifique seu e-mail para confirmar o cadastro." });
-      navigate("/auth/email-confirmation?login=/buyer/login");
+      navigate(`/auth/email-confirmation?login=${encodeURIComponent(loginPath)}`);
       return;
     }
 
@@ -97,7 +105,7 @@ const BuyerRegister = () => {
         title: "Conta criada!",
         description: "Cadastro concluído, mas não foi possível entrar automaticamente. Faça login para continuar.",
       });
-      navigate("/buyer/login");
+      navigate(loginPath);
       return;
     }
 
@@ -109,13 +117,22 @@ const BuyerRegister = () => {
     const mfaSetupRequired = Boolean((session as any)?.mfa_setup_required);
 
     toast({ title: "Conta criada!", description: "Bem-vindo." });
-    navigate(mfaPending ? (mfaSetupRequired ? "/auth/2fa/setup" : "/auth/2fa") : "/buyer/purchases");
+    navigate(mfaPending ? (mfaSetupRequired ? "/auth/2fa/setup" : "/auth/2fa") : (safeReturnTo || "/buyer/purchases"));
   };
 
   return (
     <AuthLayout title="Criar conta cliente" subtitle="Preencha seus dados para começar">
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <Button asChild variant="ghost">
+              <Link to="/">Voltar ao site</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link to="/auth/login">Sou vendedor</Link>
+            </Button>
+          </div>
+
           <FormField
             control={form.control}
             name="name"
@@ -198,6 +215,16 @@ const BuyerRegister = () => {
             <Link to="/buyer/login" className="text-primary hover:underline font-medium">
               Entrar
             </Link>
+          </p>
+
+          <Separator className="my-4" />
+
+          <p className="text-center text-sm text-muted-foreground">
+            Quer vender na plataforma?{" "}
+            <Link to="/auth/login" className="text-primary hover:underline font-medium">
+              Acesse o painel do vendedor
+            </Link>
+            .
           </p>
         </form>
       </Form>

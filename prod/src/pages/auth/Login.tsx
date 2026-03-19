@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useMemo, useState, useEffect } from "react";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import AuthLayout from "@/components/layout/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -28,17 +28,24 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const { signIn, signOut, user, role, session } = useAuth();
   const turnstileSiteKey = getTurnstileSiteKey();
+  const safeReturnTo = useMemo(() => {
+    const value = new URLSearchParams(location.search).get("returnTo");
+    if (!value) return null;
+    if (!value.startsWith("/") || value.startsWith("//")) return null;
+    return value;
+  }, [location.search]);
 
   // If already authenticated as seller, redirect immediately
   useEffect(() => {
     const pending = Boolean((session as any)?.mfa_pending);
     if (user && role === "seller" && !pending) {
-      navigate("/app/dashboard", { replace: true });
+      navigate(safeReturnTo || "/app/dashboard", { replace: true });
     }
-  }, [user, role, session, navigate]);
+  }, [user, role, session, navigate, safeReturnTo]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -105,7 +112,7 @@ const Login = () => {
         return;
       }
       toast({ title: "Login realizado!", description: "Bem-vindo de volta." });
-      navigate("/app/dashboard", { replace: true });
+      navigate(safeReturnTo || "/app/dashboard", { replace: true });
     }
     setLoading(false);
   };
@@ -114,6 +121,15 @@ const Login = () => {
     <AuthLayout title="Acessar sua conta" subtitle="É muito bom ter você de volta!">
       {step === "credentials" ? (
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <Button asChild variant="ghost">
+              <Link to="/">Voltar ao site</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link to="/buyer/login">Sou comprador</Link>
+            </Button>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="email">E-mail</Label>
             <Input
@@ -222,7 +238,7 @@ const Login = () => {
               return;
             }
             toast({ title: "Login realizado!", description: "Bem-vindo de volta." });
-            navigate("/app/dashboard", { replace: true });
+            navigate(safeReturnTo || "/app/dashboard", { replace: true });
           }}
         />
       )}

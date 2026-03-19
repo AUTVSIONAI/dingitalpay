@@ -12,6 +12,22 @@ import {
   assertOwnedCourseModule,
 } from "./dbOwnership.js";
 
+function isMissingTableError(err: any) {
+  const code = String(err?.code || "");
+  if (code === "42P01") return true;
+  const msg = String(err?.message || "").toLowerCase();
+  return msg.includes("does not exist") || msg.includes("undefined_table") || msg.includes("relation");
+}
+
+function sendAffiliateMigrationRequired(reply: any) {
+  return reply.code(503).send({
+    error: {
+      code: "MIGRATION_REQUIRED",
+      message: "Sistema de afiliados ainda não foi instalado no banco. Aplique a migração 0034_affiliates.sql e reinicie a API.",
+    },
+  });
+}
+
 const productCreateSchema = z.object({
   name: z.string().trim().min(1).max(160),
   short_description: z.string().trim().max(500).optional().default(""),
@@ -422,30 +438,35 @@ export async function registerSellerProductRoutes(api: FastifyInstance, db: Db) 
     if (!(await ensureOwnedProduct(db, sellerId, productId))) {
       return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Product not found" } });
     }
-    const res = await db.query<any>(
-      "select product_id, enabled, commission_percent, cookie_days, created_at, updated_at from public.affiliate_programs where product_id = $1 limit 1",
-      [productId]
-    );
-    const row = res.rows[0];
-    return reply.send({
-      data: row
-        ? {
-            product_id: String(row.product_id || ""),
-            enabled: row.enabled === true,
-            commission_percent: Number(row.commission_percent || 0),
-            cookie_days: Number(row.cookie_days || 0),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-          }
-        : {
-            product_id: productId,
-            enabled: false,
-            commission_percent: 30,
-            cookie_days: 30,
-            created_at: null,
-            updated_at: null,
-          },
-    });
+    try {
+      const res = await db.query<any>(
+        "select product_id, enabled, commission_percent, cookie_days, created_at, updated_at from public.affiliate_programs where product_id = $1 limit 1",
+        [productId]
+      );
+      const row = res.rows[0];
+      return reply.send({
+        data: row
+          ? {
+              product_id: String(row.product_id || ""),
+              enabled: row.enabled === true,
+              commission_percent: Number(row.commission_percent || 0),
+              cookie_days: Number(row.cookie_days || 0),
+              created_at: row.created_at,
+              updated_at: row.updated_at,
+            }
+          : {
+              product_id: productId,
+              enabled: false,
+              commission_percent: 30,
+              cookie_days: 30,
+              created_at: null,
+              updated_at: null,
+            },
+      });
+    } catch (err: any) {
+      if (isMissingTableError(err)) return sendAffiliateMigrationRequired(reply);
+      throw err;
+    }
   });
 
   api.put("/seller/products/:productId/affiliate-program", async (req, reply) => {
@@ -462,30 +483,35 @@ export async function registerSellerProductRoutes(api: FastifyInstance, db: Db) 
       cookie_days: z.number().int().min(1).max(365).optional(),
     }).refine((value) => Object.keys(value).length > 0, { message: "Nenhuma alteração informada." }).parse(req.body ?? {});
 
-    const res = await db.query<any>(
-      `
-        insert into public.affiliate_programs(product_id, enabled, commission_percent, cookie_days)
-        values ($1, coalesce($2, false), coalesce($3, 30), coalesce($4, 30))
-        on conflict (product_id) do update set
-          enabled = coalesce(excluded.enabled, public.affiliate_programs.enabled),
-          commission_percent = coalesce(excluded.commission_percent, public.affiliate_programs.commission_percent),
-          cookie_days = coalesce(excluded.cookie_days, public.affiliate_programs.cookie_days),
-          updated_at = now()
-        returning product_id, enabled, commission_percent, cookie_days, created_at, updated_at
-      `,
-      [productId, body.enabled ?? null, body.commission_percent ?? null, body.cookie_days ?? null]
-    );
-    const row = res.rows[0];
-    return reply.send({
-      data: {
-        product_id: String(row.product_id || ""),
-        enabled: row.enabled === true,
-        commission_percent: Number(row.commission_percent || 0),
-        cookie_days: Number(row.cookie_days || 0),
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-      },
-    });
+    try {
+      const res = await db.query<any>(
+        `
+          insert into public.affiliate_programs(product_id, enabled, commission_percent, cookie_days)
+          values ($1, coalesce($2, false), coalesce($3, 30), coalesce($4, 30))
+          on conflict (product_id) do update set
+            enabled = coalesce(excluded.enabled, public.affiliate_programs.enabled),
+            commission_percent = coalesce(excluded.commission_percent, public.affiliate_programs.commission_percent),
+            cookie_days = coalesce(excluded.cookie_days, public.affiliate_programs.cookie_days),
+            updated_at = now()
+          returning product_id, enabled, commission_percent, cookie_days, created_at, updated_at
+        `,
+        [productId, body.enabled ?? null, body.commission_percent ?? null, body.cookie_days ?? null]
+      );
+      const row = res.rows[0];
+      return reply.send({
+        data: {
+          product_id: String(row.product_id || ""),
+          enabled: row.enabled === true,
+          commission_percent: Number(row.commission_percent || 0),
+          cookie_days: Number(row.cookie_days || 0),
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+        },
+      });
+    } catch (err: any) {
+      if (isMissingTableError(err)) return sendAffiliateMigrationRequired(reply);
+      throw err;
+    }
   });
 
   api.get("/seller/products/:productId/offers", async (req, reply) => {

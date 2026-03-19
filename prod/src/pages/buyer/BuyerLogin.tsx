@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useMemo, useState, useEffect } from "react";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import AuthLayout from "@/components/layout/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -29,17 +29,24 @@ const BuyerLogin = () => {
   const [loading, setLoading] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const { signIn, user, role, session } = useAuth();
   const turnstileSiteKey = getTurnstileSiteKey();
+  const safeReturnTo = useMemo(() => {
+    const value = new URLSearchParams(location.search).get("returnTo");
+    if (!value) return null;
+    if (!value.startsWith("/") || value.startsWith("//")) return null;
+    return value;
+  }, [location.search]);
 
   // If already authenticated as buyer, redirect immediately
   useEffect(() => {
     const pending = Boolean((session as any)?.mfa_pending);
     if (user && role === "buyer" && !pending) {
-      navigate("/buyer/purchases", { replace: true });
+      navigate(safeReturnTo || "/buyer/purchases", { replace: true });
     }
-  }, [user, role, session, navigate]);
+  }, [user, role, session, navigate, safeReturnTo]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,7 +106,7 @@ const BuyerLogin = () => {
         return;
       }
       toast({ title: "Login realizado!", description: "Bem-vindo de volta." });
-      navigate("/buyer/purchases", { replace: true });
+      navigate(safeReturnTo || "/buyer/purchases", { replace: true });
     }
     setLoading(false);
   };
@@ -108,6 +115,15 @@ const BuyerLogin = () => {
     <AuthLayout title="Área do cliente" subtitle="Acesse suas compras e cursos">
       {step === "credentials" ? (
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <Button asChild variant="ghost">
+              <Link to="/">Voltar ao site</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link to="/auth/login">Sou vendedor</Link>
+            </Button>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="email">E-mail</Label>
             <Input
@@ -170,6 +186,16 @@ const BuyerLogin = () => {
               Cadastre-se
             </Link>
           </p>
+
+          <Separator className="my-4" />
+
+          <p className="text-center text-sm text-muted-foreground">
+            Quer vender na plataforma?{" "}
+            <Link to="/auth/login" className="text-primary hover:underline font-medium">
+              Acesse o painel do vendedor
+            </Link>
+            .
+          </p>
         </form>
       ) : (
         <LoginTwoFactorInline
@@ -199,7 +225,7 @@ const BuyerLogin = () => {
               return;
             }
             toast({ title: "Login realizado!", description: "Bem-vindo de volta." });
-            navigate("/buyer/purchases", { replace: true });
+            navigate(safeReturnTo || "/buyer/purchases", { replace: true });
           }}
         />
       )}

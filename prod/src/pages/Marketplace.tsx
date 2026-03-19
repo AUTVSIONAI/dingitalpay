@@ -50,6 +50,15 @@ const Marketplace = () => {
     }
   };
 
+  const handleOpenCheckout = (productId: string) => {
+    const returnTo = `/checkout/${productId}`;
+    if (!user) {
+      navigate(`/buyer/register?returnTo=${encodeURIComponent(returnTo)}`);
+      return;
+    }
+    navigate(returnTo);
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
@@ -140,7 +149,7 @@ const Marketplace = () => {
 
                     <Button
                       className="w-full"
-                      onClick={() => navigate(`/checkout/${p.id}`)}
+                      onClick={() => handleOpenCheckout(p.id)}
                     >
                       <ExternalLink className="h-4 w-4 mr-2" />
                       Ver checkout
