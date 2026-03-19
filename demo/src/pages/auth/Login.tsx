@@ -176,6 +176,20 @@ const Login = () => {
               Cadastre-se
             </Link>
           </p>
+
+          <Separator className="my-4" />
+
+          <p className="text-center text-sm text-muted-foreground">
+            É cliente?{" "}
+            <Link to="/buyer/login" className="text-primary hover:underline font-medium">
+              Acesse a área do cliente
+            </Link>
+            {" "}ou{" "}
+            <Link to="/buyer/register" className="text-primary hover:underline font-medium">
+              crie uma conta
+            </Link>
+            .
+          </p>
         </form>
       ) : (
         <LoginTwoFactorInline

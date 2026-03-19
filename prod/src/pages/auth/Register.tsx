@@ -199,6 +199,16 @@ const Register = () => {
               Entrar
             </Link>
           </p>
+
+          <Separator className="my-4" />
+
+          <p className="text-center text-sm text-muted-foreground">
+            Quer comprar e acessar seus cursos?{" "}
+            <Link to="/buyer/register" className="text-primary hover:underline font-medium">
+              Crie uma conta de cliente
+            </Link>
+            .
+          </p>
         </form>
       </Form>
     </AuthLayout>

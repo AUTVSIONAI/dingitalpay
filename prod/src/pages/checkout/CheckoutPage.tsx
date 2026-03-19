@@ -190,7 +190,7 @@ const CheckoutPage = () => {
 
   // Collect UTM params
   const getUtmParams = useCallback(() => {
-    const utmKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
+    const utmKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "ref", "affiliate", "aff"];
     const utm: Record<string, string> = {};
     utmKeys.forEach((key) => {
       const val = searchParams.get(key);
