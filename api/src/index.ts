@@ -23,6 +23,7 @@ import { registerAdminDashboardRoutes } from "./adminDashboardRoutes.js";
 import { registerAdminReportsRoutes } from "./adminReportsRoutes.js";
 import { registerAdminOperationsRoutes } from "./adminOperationsRoutes.js";
 import { registerFinanceWithdrawalRoutes } from "./financeWithdrawalRoutes.js";
+import { registerAffiliateRoutes } from "./affiliateRoutes.js";
 import { createFixedWindowRateLimiter } from "./rateLimit.js";
 import { logSecurityEvent } from "./securityAudit.js";
 import { ensureSmtpPasswordEncrypted } from "./smtpCrypto.js";
@@ -252,6 +253,7 @@ await app.register(async (api) => {
   await registerSellerSalesRoutes(api, db);
   await registerSellerProductRoutes(api, db);
   await registerSellerIntegrationRoutes(api, db, env);
+  await registerAffiliateRoutes(api, db, env);
 	  await registerDbRoutes(api, db, env);
 	  await registerStorageRoutes(api, db, env);
 	  await registerFunctions(api, db, env);

@@ -54,7 +54,9 @@ const AdminUsers = () => {
       try {
         const data = await getAdminUsers();
         setUsers(data);
-      } catch {}
+      } catch {
+        void 0;
+      }
       setLoading(false);
     };
     load();

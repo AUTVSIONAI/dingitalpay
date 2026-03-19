@@ -67,6 +67,7 @@ const BuyerLogin = lazy(() => import("./pages/buyer/BuyerLogin"));
 const BuyerRegister = lazy(() => import("./pages/buyer/BuyerRegister"));
 const BuyerForgotPassword = lazy(() => import("./pages/buyer/BuyerForgotPassword"));
 const BuyerResetPassword = lazy(() => import("./pages/buyer/BuyerResetPassword"));
+const BuyerAffiliates = lazy(() => import("./pages/buyer/BuyerAffiliates"));
 
 // Lazy loaded pages — members
 const MembersCourses = lazy(() => import("./pages/members/MembersCourses"));
@@ -80,6 +81,7 @@ const ThankYouPage = lazy(() => import("./pages/checkout/ThankYouPage"));
 const PixPaymentPage = lazy(() => import("./pages/checkout/PixPaymentPage"));
 
 // Lazy loaded pages — misc
+const Marketplace = lazy(() => import("./pages/Marketplace"));
 
 const queryClient = new QueryClient();
 
@@ -104,6 +106,7 @@ const OverlayCleanup = () => {
         document.body.style.removeProperty("padding-right");
         document.body.style.removeProperty("pointer-events");
       } catch {
+        void 0;
       }
     };
 
@@ -111,6 +114,7 @@ const OverlayCleanup = () => {
       try {
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
       } catch {
+        void 0;
       }
     };
 
@@ -133,6 +137,7 @@ const OverlayCleanup = () => {
           if (!hasDialogContent) overlay.remove();
         });
       } catch {
+        void 0;
       }
     };
 
@@ -145,6 +150,7 @@ const OverlayCleanup = () => {
         const hasAnyOverlay = Boolean(document.querySelector('[data-state][class*="fixed"][class*="inset-0"][class*="bg-black"]'));
         if (!hasOpenDialog && !hasAnyOverlay) unlockBody();
       } catch {
+        void 0;
       }
     };
 
@@ -180,6 +186,7 @@ const router = createBrowserRouter([
         element: <MaintenanceGuard />,
         children: [
           { path: "/", element: <Index /> },
+          { path: "/marketplace", element: <Marketplace /> },
           { path: "/auth/login", element: <Login /> },
           { path: "/auth/register", element: <Register /> },
           { path: "/auth/forgot", element: <ForgotPassword /> },
@@ -221,6 +228,7 @@ const router = createBrowserRouter([
             element: <ProtectedRoute allowedRoles={["buyer"]}><BuyerLayout /></ProtectedRoute>,
             children: [
               { path: "purchases", element: <BuyerPurchases /> },
+              { path: "affiliates", element: <BuyerAffiliates /> },
               { path: "profile", element: <BuyerProfile /> },
             ],
           },

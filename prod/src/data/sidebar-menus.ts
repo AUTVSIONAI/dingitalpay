@@ -30,6 +30,7 @@ export const sellerMenu: SidebarMenuItem[] = [
 
 export const buyerMenu: SidebarMenuItem[] = [
   { label: "Minhas Compras", icon: "ShoppingBag", path: "/buyer/purchases" },
+  { label: "Afiliados", icon: "Megaphone", path: "/buyer/affiliates" },
   { label: "Meus Cursos", icon: "GraduationCap", path: "/members/courses" },
   { label: "Meu Perfil", icon: "User", path: "/buyer/profile" },
 ];

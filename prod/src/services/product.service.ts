@@ -215,6 +215,93 @@ export const fetchPublicProductsByIds = async (ids: string[]): Promise<DbProduct
   return await apiFetchJson<DbProduct[]>(`/public/products/by-ids?ids=${encodeURIComponent(uniqueIds.join(","))}`);
 };
 
+export const fetchPublicProducts = async (params?: {
+  q?: string;
+  type?: "ebook" | "course" | "physical";
+  limit?: number;
+  offset?: number;
+}): Promise<DbProduct[]> => {
+  if (isDemo()) return demoProducts.filter((p) => p.status === "active");
+  const q = String(params?.q || "").trim();
+  const searchParams = new URLSearchParams();
+  if (q) searchParams.set("q", q);
+  if (params?.type) searchParams.set("type", params.type);
+  if (params?.limit != null) searchParams.set("limit", String(params.limit));
+  if (params?.offset != null) searchParams.set("offset", String(params.offset));
+  const qs = searchParams.toString();
+  return await apiFetchJson<DbProduct[]>(`/public/products${qs ? `?${qs}` : ""}`);
+};
+
+export interface DbAffiliateProgram {
+  product_id: string;
+  enabled: boolean;
+  commission_percent: number;
+  cookie_days: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export const fetchAffiliateProgram = async (productId: string): Promise<DbAffiliateProgram> => {
+  return await apiFetchJson<DbAffiliateProgram>(`/seller/products/${encodeURIComponent(productId)}/affiliate-program`);
+};
+
+export const updateAffiliateProgram = async (productId: string, updates: Partial<Pick<DbAffiliateProgram, "enabled" | "commission_percent" | "cookie_days">>) => {
+  return await apiFetchJson<DbAffiliateProgram>(`/seller/products/${encodeURIComponent(productId)}/affiliate-program`, {
+    method: "PUT",
+    body: JSON.stringify(updates),
+  });
+};
+
+export interface DbAffiliateLink {
+  id: string;
+  code: string;
+  url: string;
+  product_id: string;
+  product_name: string;
+  offer_id: string | null;
+  offer_slug: string | null;
+  offer_name: string | null;
+  created_at: string;
+  program_enabled: boolean;
+  commission_percent: number;
+}
+
+export const createAffiliateLink = async (input: { product_id: string; offer_id?: string | null }): Promise<Pick<DbAffiliateLink, "id" | "code" | "url">> => {
+  return await apiFetchJson<Pick<DbAffiliateLink, "id" | "code" | "url">>("/affiliate/links", {
+    method: "POST",
+    body: JSON.stringify({ product_id: input.product_id, offer_id: input.offer_id ?? null }),
+  });
+};
+
+export const fetchAffiliateLinks = async (params?: { product_id?: string }): Promise<DbAffiliateLink[]> => {
+  const qs = params?.product_id ? `?product_id=${encodeURIComponent(params.product_id)}` : "";
+  return await apiFetchJson<DbAffiliateLink[]>(`/affiliate/links${qs}`);
+};
+
+export interface DbAffiliateCommission {
+  id: string;
+  order_id: string;
+  product_id: string;
+  product_name: string;
+  seller_id: string;
+  commission_percent: number;
+  commission_amount: number;
+  commission_status: "pending" | "available" | "canceled" | "paid";
+  order_status: string;
+  order_gross_amount: number;
+  order_method: string;
+  created_at: string;
+}
+
+export const fetchAffiliateCommissions = async (params?: { status?: DbAffiliateCommission["commission_status"] }): Promise<DbAffiliateCommission[]> => {
+  const qs = params?.status ? `?status=${encodeURIComponent(params.status)}` : "";
+  return await apiFetchJson<DbAffiliateCommission[]>(`/affiliate/commissions${qs}`);
+};
+
+export const fetchAffiliateSummary = async (): Promise<{ pending_total: number; available_total: number; paid_total: number; total_count: number }> => {
+  return await apiFetchJson<{ pending_total: number; available_total: number; paid_total: number; total_count: number }>("/affiliate/summary");
+};
+
 export const createProduct = async (product: {
   name: string;
   short_description?: string;

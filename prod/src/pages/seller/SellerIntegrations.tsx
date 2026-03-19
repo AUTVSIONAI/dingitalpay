@@ -45,7 +45,9 @@ const SellerIntegrations = () => {
           if (item.name === "Zapier") return { ...item, connected: zapier.length > 0 };
           return item;
         }));
-      } catch {}
+      } catch {
+        void 0;
+      }
     };
     load();
   }, []);

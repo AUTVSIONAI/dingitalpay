@@ -265,7 +265,9 @@ const getStoredValue = <T,>(key: string, fallback: T): T => {
   try {
     const stored = localStorage.getItem(key);
     if (stored !== null) return JSON.parse(stored) as T;
-  } catch {}
+  } catch {
+    void 0;
+  }
   return fallback;
 };
 

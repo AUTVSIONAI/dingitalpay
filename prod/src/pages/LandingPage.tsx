@@ -138,6 +138,9 @@ const LandingPage = () => {
             <Button asChild variant="ghost" className="hidden sm:inline-flex">
               <Link to="/admin/login">Admin</Link>
             </Button>
+            <Button asChild variant="ghost" className="hidden sm:inline-flex">
+              <Link to="/marketplace">Marketplace</Link>
+            </Button>
             <Button asChild variant="outline" className="hidden sm:inline-flex">
               <Link to="/auth/login">Entrar</Link>
             </Button>

@@ -153,7 +153,7 @@ const SellerProductDetail = () => {
           <TabsContent value="links"><ProductLinksTab productId={productId} /></TabsContent>
           <TabsContent value="upsell"><ProductUpsellTab productId={product.id} /></TabsContent>
           <TabsContent value="ofertas"><ProductOffersTab productId={productId} /></TabsContent>
-          <TabsContent value="afiliacao"><ProductAffiliationTab /></TabsContent>
+          <TabsContent value="afiliacao"><ProductAffiliationTab productId={productId} /></TabsContent>
           <TabsContent value="dominios"><ProductDomainsTab productId={productId} /></TabsContent>
           <TabsContent value="pixels"><ProductPixelsTab productId={product.id} /></TabsContent>
           <TabsContent value="danger"><ProductDangerTab productId={product.id} productName={product.name} salesCount={Number(product.sales || 0)} /></TabsContent>

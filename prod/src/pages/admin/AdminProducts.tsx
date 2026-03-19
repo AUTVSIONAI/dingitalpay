@@ -51,7 +51,9 @@ const AdminProducts = () => {
       try {
         const data = await getAdminProducts();
         setProducts(data);
-      } catch {}
+      } catch {
+        void 0;
+      }
       setLoading(false);
     };
     load();

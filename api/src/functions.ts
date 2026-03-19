@@ -959,6 +959,107 @@ async function sendFacebookInitiateCheckoutForOrder(
   });
 }
 
+function normalizeAffiliateCode(raw: unknown): string | null {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  const normalized = value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  if (normalized.length < 6 || normalized.length > 64) return null;
+  return normalized;
+}
+
+async function resolveAffiliateAttributionForOrder(
+  db: Db,
+  input: { productId: string; offerId?: string | null; sellerId: string; utm?: Record<string, any> | null }
+): Promise<{ affiliate_user_id: string; affiliate_link_id: string } | null> {
+  const utm = input.utm || {};
+  const raw = utm.ref ?? utm.affiliate ?? utm.aff ?? null;
+  const code = normalizeAffiliateCode(raw);
+  if (!code) return null;
+
+  const res = await db.query<any>(
+    `
+      select
+        l.id,
+        l.affiliate_user_id,
+        l.product_id,
+        l.offer_id,
+        ap.enabled as program_enabled
+      from public.affiliate_links l
+      left join public.affiliate_programs ap on ap.product_id = l.product_id
+      where upper(l.code) = upper($1)
+      limit 1
+    `,
+    [code]
+  );
+  const link = res.rows[0];
+  if (!link) return null;
+  if (link.program_enabled !== true) return null;
+  if (String(link.product_id || "") !== input.productId) return null;
+  if (String(link.affiliate_user_id || "") === String(input.sellerId || "")) return null;
+
+  const linkOfferId = link.offer_id ? String(link.offer_id) : null;
+  const orderOfferId = input.offerId ? String(input.offerId) : null;
+  if (linkOfferId && linkOfferId !== orderOfferId) return null;
+
+  return { affiliate_user_id: String(link.affiliate_user_id || ""), affiliate_link_id: String(link.id || "") };
+}
+
+async function syncAffiliateCommissionForOrderStatus(db: Db, orderId: string, nextStatus: string) {
+  const status = String(nextStatus || "").toLowerCase();
+  if (!orderId) return;
+
+  if (status === "approved") {
+    const existing = await db.query<any>("select id from public.affiliate_commissions where order_id = $1 limit 1", [orderId]);
+    if (existing.rows[0]) return;
+
+    const orderRes = await db.query<any>(
+      `
+        select
+          id,
+          seller_id,
+          product_id,
+          amount,
+          affiliate_link_id,
+          affiliate_user_id
+        from public.orders
+        where id = $1
+        limit 1
+      `,
+      [orderId]
+    );
+    const order = orderRes.rows[0];
+    if (!order) return;
+    if (!order.affiliate_user_id) return;
+
+    const programRes = await db.query<any>(
+      "select enabled, commission_percent from public.affiliate_programs where product_id = $1 limit 1",
+      [order.product_id]
+    );
+    const program = programRes.rows[0];
+    if (!program || program.enabled !== true) return;
+
+    const percent = roundCurrency(program.commission_percent || 0);
+    if (percent <= 0) return;
+    const base = roundCurrency(order.amount || 0);
+    const amount = roundCurrency((base * percent) / 100);
+    if (amount <= 0) return;
+
+    await db.query(
+      `
+        insert into public.affiliate_commissions(order_id, affiliate_link_id, affiliate_user_id, seller_id, product_id, commission_percent, commission_amount, status)
+        values ($1,$2,$3,$4,$5,$6,$7,'pending')
+        on conflict (order_id) do nothing
+      `,
+      [order.id, order.affiliate_link_id || null, order.affiliate_user_id, order.seller_id, order.product_id, percent, amount]
+    );
+    return;
+  }
+
+  if (status === "refunded" || status === "chargeback" || status === "abandoned") {
+    await db.query("update public.affiliate_commissions set status = 'canceled' where order_id = $1 and status <> 'paid'", [orderId]);
+  }
+}
+
 export async function registerFunctions(app: FastifyInstance, db: Db, env: Env) {
   // In-memory anti-abuse cache for Mercado Pago webhook: prevents repeated external fetches for the same invalid payment ID.
   const mpNotFoundCache = new Map<string, number>(); // paymentId -> expiresAtMs
@@ -1024,6 +1125,13 @@ export async function registerFunctions(app: FastifyInstance, db: Db, env: Env) 
       }
       baseAmount = roundCurrency(offer.price || 0);
     }
+
+    const affiliateAttribution = await resolveAffiliateAttributionForOrder(db, {
+      productId: body.product_id,
+      offerId: body.offer_id || null,
+      sellerId: String(product.seller_id || ""),
+      utm: (body.utm as any) || null,
+    }).catch(() => null);
 
     const requestedBaseItems = body.items.filter((item) => !item.is_order_bump);
     if (requestedBaseItems.some((item) => String(item.product_id || "").trim() !== body.product_id)) {
@@ -1118,8 +1226,8 @@ export async function registerFunctions(app: FastifyInstance, db: Db, env: Env) 
     }
 
     const orderInsert = await db.query<any>(
-      `insert into public.orders(seller_id, product_id, buyer_email, buyer_name, buyer_phone, buyer_cpf, product_name, amount, method, status, transaction_id, utm, client_ip, client_user_agent, checkout_url, meta_fbc, meta_fbp, payment_token_hash, payment_token_expires_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','',$10,$11,$12,$13,$14,$15,$16,$17)
+      `insert into public.orders(seller_id, product_id, buyer_email, buyer_name, buyer_phone, buyer_cpf, product_name, amount, method, status, transaction_id, utm, client_ip, client_user_agent, checkout_url, meta_fbc, meta_fbp, payment_token_hash, payment_token_expires_at, affiliate_link_id, affiliate_user_id)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending','',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        returning id`,
       [
         product.seller_id,
@@ -1139,6 +1247,8 @@ export async function registerFunctions(app: FastifyInstance, db: Db, env: Env) 
         metaFbp,
         paymentTokenHash,
         paymentTokenExpiresAt,
+        affiliateAttribution?.affiliate_link_id || null,
+        affiliateAttribution?.affiliate_user_id || null,
       ]
     );
     const orderId = String(orderInsert.rows[0]?.id || "");
@@ -1611,6 +1721,10 @@ export async function registerFunctions(app: FastifyInstance, db: Db, env: Env) 
       }
     }
 
+    if (mutation.shouldPersistStatus) {
+      await syncAffiliateCommissionForOrderStatus(db, String(orderId), String(mutation.nextStatus || "")).catch(() => {});
+    }
+
     const webhookEventMap: Record<string, string> = {
       approved: "transaction.authorized",
       pending: "transaction.pending",
@@ -1725,6 +1839,10 @@ export async function registerFunctions(app: FastifyInstance, db: Db, env: Env) 
           );
         }
       }
+    }
+
+    if (mutation.shouldPersistStatus) {
+      await syncAffiliateCommissionForOrderStatus(db, String(order.id || ""), String(mutation.nextStatus || "")).catch(() => {});
     }
 
     const webhookEventMap: Record<string, string> = {

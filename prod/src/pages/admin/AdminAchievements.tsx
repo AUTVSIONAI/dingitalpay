@@ -50,7 +50,9 @@ const AdminAchievements = () => {
         const [r, c] = await Promise.all([getRewards(), getRewardClaims()]);
         setRewards(r);
         setClaims(c);
-      } catch {}
+      } catch {
+        void 0;
+      }
       setLoading(false);
     };
     load();

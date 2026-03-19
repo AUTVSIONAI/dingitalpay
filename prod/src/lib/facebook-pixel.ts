@@ -23,7 +23,11 @@ export const initFacebookPixel = (pixelId: string): void => {
   // Inject fbq loader if not present
   if (!window.fbq) {
     const n: any = (window.fbq = function (...args: any[]) {
-      n.callMethod ? n.callMethod.apply(n, args) : n.queue.push(args);
+      if (n.callMethod) {
+        n.callMethod(...args);
+      } else {
+        n.queue.push(args);
+      }
     });
     if (!window._fbq) window._fbq = n;
     n.push = n;

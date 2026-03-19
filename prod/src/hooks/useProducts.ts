@@ -3,6 +3,7 @@ import {
   fetchSellerProducts,
   fetchProductById,
   fetchProductsByIds,
+  fetchPublicProducts,
   createProduct,
   updateProduct,
   deleteProduct,
@@ -37,8 +38,14 @@ import {
   createCourseLesson,
   updateCourseLesson,
   deleteCourseLesson,
+  fetchAffiliateProgram,
+  updateAffiliateProgram,
+  fetchAffiliateLinks,
+  createAffiliateLink,
+  fetchAffiliateCommissions,
+  fetchAffiliateSummary,
 } from "@/services/product.service";
-import type { DbProduct, DbProductOffer, DbProductCheckoutConfig } from "@/services/product.service";
+import type { DbProduct, DbProductOffer, DbProductCheckoutConfig, DbAffiliateProgram, DbAffiliateCommission } from "@/services/product.service";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -69,6 +76,14 @@ export const useProductsByIds = (ids: string[]) => {
     queryKey: ["products-by-ids", sortedIds.join(",")],
     queryFn: () => fetchProductsByIds(sortedIds),
     enabled: sortedIds.length > 0,
+  });
+};
+
+export const usePublicProducts = (params?: { q?: string; type?: "ebook" | "course" | "physical"; limit?: number; offset?: number }) => {
+  const key = JSON.stringify({ q: params?.q || "", type: params?.type || "", limit: params?.limit ?? 24, offset: params?.offset ?? 0 });
+  return useQuery({
+    queryKey: ["public-products", key],
+    queryFn: () => fetchPublicProducts(params),
   });
 };
 
@@ -268,6 +283,64 @@ export const useVerifyProductDomain = (productId: string) => {
     onError: (error: Error) => {
       toast.error("Erro ao verificar: " + error.message);
     },
+  });
+};
+
+export const useAffiliateProgram = (productId: string | undefined) => {
+  return useQuery({
+    queryKey: ["affiliate-program", productId],
+    queryFn: () => fetchAffiliateProgram(productId!),
+    enabled: !!productId,
+  });
+};
+
+export const useUpdateAffiliateProgram = (productId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (updates: Partial<Pick<DbAffiliateProgram, "enabled" | "commission_percent" | "cookie_days">>) =>
+      updateAffiliateProgram(productId, updates),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["affiliate-program", productId] });
+      toast.success("Afiliação atualizada!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao atualizar afiliação: " + error.message);
+    },
+  });
+};
+
+export const useAffiliateLinks = (params?: { product_id?: string }) => {
+  return useQuery({
+    queryKey: ["affiliate-links", params?.product_id || ""],
+    queryFn: () => fetchAffiliateLinks(params),
+  });
+};
+
+export const useCreateAffiliateLink = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { product_id: string; offer_id?: string | null }) => createAffiliateLink(input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["affiliate-links"] });
+      toast.success("Link de afiliado gerado!");
+    },
+    onError: (error: Error) => {
+      toast.error("Erro ao gerar link: " + error.message);
+    },
+  });
+};
+
+export const useAffiliateCommissions = (params?: { status?: DbAffiliateCommission["commission_status"] }) => {
+  return useQuery({
+    queryKey: ["affiliate-commissions", params?.status || ""],
+    queryFn: () => fetchAffiliateCommissions(params),
+  });
+};
+
+export const useAffiliateSummary = () => {
+  return useQuery({
+    queryKey: ["affiliate-summary"],
+    queryFn: fetchAffiliateSummary,
   });
 };
 

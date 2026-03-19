@@ -343,6 +343,48 @@ export async function registerPublicRoutes(app: FastifyInstance, db: Db) {
     return reply.send({ data: res.rows ?? [], error: null });
   });
 
+  app.get("/public/products", async (req, reply) => {
+    const query = z.object({
+      q: z.string().trim().max(200).optional().default(""),
+      limit: z.coerce.number().int().min(1).max(48).optional().default(24),
+      offset: z.coerce.number().int().min(0).max(5000).optional().default(0),
+      type: z.enum(["ebook", "course", "physical"]).optional(),
+    }).parse(req.query || {});
+
+    const q = query.q ? `%${query.q}%` : null;
+
+    const res = await db.query<any>(
+      `
+        select
+          id,
+          seller_id,
+          name,
+          short_description,
+          long_description,
+          price,
+          type,
+          status,
+          image_url,
+          sales,
+          revenue,
+          warranty_days,
+          delivery_type,
+          created_at,
+          updated_at
+        from public.products
+        where status = 'active'
+          and ($1::text is null or name ilike $1 or short_description ilike $1)
+          and ($2::public.product_type is null or type = $2::public.product_type)
+        order by created_at desc
+        limit $3
+        offset $4
+      `,
+      [q, query.type || null, query.limit, query.offset]
+    );
+
+    return reply.send({ data: res.rows ?? [], error: null });
+  });
+
   app.get("/public/products/:productId", async (req, reply) => {
     const { productId } = z.object({ productId: z.string().uuid() }).parse(req.params);
     const res = await db.query(
