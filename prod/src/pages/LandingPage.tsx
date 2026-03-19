@@ -7,6 +7,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import TermsAndPrivacy from "@/components/shared/TermsAndPrivacy";
 import { usePlatformLogo, usePlatformSettings } from "@/hooks/usePlatformSettings";
+import logoCielo from "@/assets/logo-cielo.png";
+import logoGetnet from "@/assets/logo-getnet.png";
+import logoKiPay from "@/assets/logo-kipay.png";
+import logoMercadoPago from "@/assets/logo-mp.png";
+import logoRede from "@/assets/logo-rede.png";
+import logoStone from "@/assets/logo-stone.png";
 
 const LandingPage = () => {
   const { resolvedTheme, setTheme } = useTheme();
@@ -43,6 +49,33 @@ const LandingPage = () => {
     "Área do comprador e acesso a conteúdo",
     "Webhooks e integrações para automações",
     "Painel admin para configurações da plataforma",
+  ];
+
+  const integrations = [
+    { name: "Mercado Pago", logo: logoMercadoPago },
+    { name: "Cielo", logo: logoCielo },
+    { name: "Getnet", logo: logoGetnet },
+    { name: "Rede", logo: logoRede },
+    { name: "Stone", logo: logoStone },
+    { name: "KiPay", logo: logoKiPay },
+  ];
+
+  const testimonials = [
+    {
+      name: "Marina S.",
+      role: "Infoprodutora",
+      content: "Consegui publicar ofertas e organizar a entrega do conteúdo sem depender de mil ferramentas.",
+    },
+    {
+      name: "Lucas R.",
+      role: "Gestor de tráfego",
+      content: "O checkout é rápido e o funil fica bem mais claro com relatórios e eventos para automação.",
+    },
+    {
+      name: "Equipe Operação",
+      role: "SaaS / Conteúdo",
+      content: "Ter tudo no mesmo lugar reduz retrabalho: vendas, acesso, membros e gestão da plataforma.",
+    },
   ];
 
   const faq = [
@@ -293,6 +326,108 @@ const LandingPage = () => {
                   )}
                 </CardContent>
               </Card>
+            </div>
+          </section>
+
+          <section className="mt-16">
+            <div className="flex flex-col gap-2">
+              <div className="text-2xl font-semibold">Integrações</div>
+              <div className="text-sm text-muted-foreground">Conecte pagamentos e automações para escalar sua operação.</div>
+            </div>
+            <div className="mt-6 rounded-2xl border border-primary/10 bg-background/40 p-6">
+              <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-6">
+                {integrations.map((integration) => (
+                  <img
+                    key={integration.name}
+                    src={integration.logo}
+                    alt={integration.name}
+                    className="h-8 w-auto opacity-70 grayscale transition hover:opacity-100 hover:grayscale-0"
+                    loading="lazy"
+                  />
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="mt-16">
+            <div className="flex flex-col gap-2">
+              <div className="text-2xl font-semibold">Prévia do produto</div>
+              <div className="text-sm text-muted-foreground">Um gostinho do painel para você entender o fluxo.</div>
+            </div>
+            <div className="mt-6 grid gap-4 lg:grid-cols-3">
+              <Card className="border-primary/10">
+                <CardHeader>
+                  <CardTitle className="text-base">Dashboard</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="h-9 rounded-lg border border-primary/10 bg-background/40" />
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="h-16 rounded-lg bg-primary/10" />
+                    <div className="h-16 rounded-lg bg-primary/10" />
+                    <div className="h-16 rounded-lg bg-primary/10" />
+                  </div>
+                  <div className="h-24 rounded-lg bg-primary/10" />
+                </CardContent>
+              </Card>
+              <Card className="border-primary/10">
+                <CardHeader>
+                  <CardTitle className="text-base">Checkout</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="h-9 rounded-lg border border-primary/10 bg-background/40" />
+                  <div className="h-24 rounded-lg bg-primary/10" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="h-10 rounded-lg bg-primary/10" />
+                    <div className="h-10 rounded-lg bg-primary/10" />
+                  </div>
+                  <div className="h-10 rounded-lg bg-primary/15" />
+                </CardContent>
+              </Card>
+              <Card className="border-primary/10">
+                <CardHeader>
+                  <CardTitle className="text-base">Área de membros</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="h-16 rounded-lg bg-primary/10" />
+                    <div className="h-16 rounded-lg bg-primary/10" />
+                    <div className="h-16 rounded-lg bg-primary/10" />
+                  </div>
+                  <div className="h-9 rounded-lg bg-primary/10" />
+                  <div className="h-9 rounded-lg bg-primary/10" />
+                  <div className="h-9 rounded-lg bg-primary/10" />
+                </CardContent>
+              </Card>
+            </div>
+          </section>
+
+          <section className="mt-16">
+            <div className="flex flex-col gap-2">
+              <div className="text-2xl font-semibold">Depoimentos</div>
+              <div className="text-sm text-muted-foreground">O que times usam para ganhar velocidade e controle.</div>
+            </div>
+            <div className="mt-6 grid gap-4 lg:grid-cols-3">
+              {testimonials.map((t) => (
+                <Card key={t.name} className="border-primary/10">
+                  <CardContent className="space-y-4 p-6">
+                    <div className="text-sm text-muted-foreground">{t.content}</div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+                        {t.name
+                          .split(" ")
+                          .slice(0, 2)
+                          .map((part) => part[0])
+                          .join("")
+                          .toUpperCase()}
+                      </div>
+                      <div className="leading-tight">
+                        <div className="text-sm font-semibold">{t.name}</div>
+                        <div className="text-xs text-muted-foreground">{t.role}</div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
           </section>
 
