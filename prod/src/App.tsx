@@ -97,21 +97,62 @@ const OverlayCleanup = () => {
     const isAppArea = path.startsWith("/app") || path.startsWith("/admin") || path.startsWith("/buyer") || path.startsWith("/members");
     if (!isAppArea) return;
 
-    try {
-      document.body.removeAttribute("data-scroll-locked");
-      document.body.style.removeProperty("overflow");
-      document.body.style.removeProperty("padding-right");
-      document.body.style.removeProperty("pointer-events");
-    } catch {
-    }
+    const unlockBody = () => {
+      try {
+        document.body.removeAttribute("data-scroll-locked");
+        document.body.style.removeProperty("overflow");
+        document.body.style.removeProperty("padding-right");
+        document.body.style.removeProperty("pointer-events");
+      } catch {
+      }
+    };
 
-    try {
-      const overlays = document.querySelectorAll<HTMLElement>(
-        'div[data-state][class*="fixed"][class*="inset-0"][class*="bg-black/80"]',
-      );
-      overlays.forEach((el) => el.remove());
-    } catch {
-    }
+    const tryDismissDialogs = () => {
+      try {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+      } catch {
+      }
+    };
+
+    const cleanupOrphanOverlays = () => {
+      try {
+        const overlays = document.querySelectorAll<HTMLElement>(
+          '[data-state][class*="fixed"][class*="inset-0"][class*="bg-black"]',
+        );
+
+        overlays.forEach((overlay) => {
+          const state = overlay.getAttribute("data-state");
+          if (state === "closed") {
+            overlay.remove();
+            return;
+          }
+
+          const portal = overlay.closest<HTMLElement>("[data-radix-portal]");
+          if (!portal) return;
+          const hasDialogContent = Boolean(portal.querySelector('[role="dialog"]'));
+          if (!hasDialogContent) overlay.remove();
+        });
+      } catch {
+      }
+    };
+
+    const run = () => {
+      tryDismissDialogs();
+      cleanupOrphanOverlays();
+
+      try {
+        const hasOpenDialog = Boolean(document.querySelector('[role="dialog"][data-state="open"]'));
+        const hasAnyOverlay = Boolean(document.querySelector('[data-state][class*="fixed"][class*="inset-0"][class*="bg-black"]'));
+        if (!hasOpenDialog && !hasAnyOverlay) unlockBody();
+      } catch {
+      }
+    };
+
+    run();
+    const timers = [150, 350, 650, 1000].map((ms) => window.setTimeout(run, ms));
+    return () => {
+      timers.forEach((id) => window.clearTimeout(id));
+    };
   }, [location.pathname]);
 
   return null;
