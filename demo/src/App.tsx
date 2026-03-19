@@ -1,9 +1,9 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createBrowserRouter, RouterProvider, Navigate, Outlet } from "react-router-dom";
+import { createBrowserRouter, RouterProvider, Navigate, Outlet, useLocation } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
 import DomainResolver from "@/components/DomainResolver";
@@ -89,10 +89,39 @@ const SuspenseWrapper = ({ children }: { children: React.ReactNode }) => (
   </Suspense>
 );
 
+const OverlayCleanup = () => {
+  const location = useLocation();
+
+  useEffect(() => {
+    const path = location.pathname || "/";
+    const isAppArea = path.startsWith("/app") || path.startsWith("/admin") || path.startsWith("/buyer") || path.startsWith("/members");
+    if (!isAppArea) return;
+
+    try {
+      document.body.removeAttribute("data-scroll-locked");
+      document.body.style.removeProperty("overflow");
+      document.body.style.removeProperty("padding-right");
+      document.body.style.removeProperty("pointer-events");
+    } catch {
+    }
+
+    try {
+      const overlays = document.querySelectorAll<HTMLElement>(
+        'div[data-state][class*="fixed"][class*="inset-0"][class*="bg-black/80"]',
+      );
+      overlays.forEach((el) => el.remove());
+    } catch {
+    }
+  }, [location.pathname]);
+
+  return null;
+};
+
 // Root layout that wraps everything with AuthProvider
 const RootLayout = () => (
   <AuthProvider>
     <div>
+      <OverlayCleanup />
       <SuspenseWrapper>
         <Outlet />
       </SuspenseWrapper>
