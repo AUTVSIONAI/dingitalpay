@@ -211,6 +211,7 @@ const router = createBrowserRouter([
             children: [
               { index: true, element: <Navigate to="dashboard" replace /> },
               { path: "dashboard", element: <SellerDashboard /> },
+              { path: "marketplace", element: <Marketplace /> },
               { path: "sales", element: <SellerSales /> },
               { path: "products", element: <SellerProducts /> },
               { path: "products/:productId", element: <SellerProductDetail /> },
@@ -227,6 +228,7 @@ const router = createBrowserRouter([
             path: "/buyer",
             element: <ProtectedRoute allowedRoles={["buyer"]}><BuyerLayout /></ProtectedRoute>,
             children: [
+              { path: "marketplace", element: <Marketplace /> },
               { path: "purchases", element: <BuyerPurchases /> },
               { path: "affiliates", element: <BuyerAffiliates /> },
               { path: "profile", element: <BuyerProfile /> },
@@ -251,6 +253,7 @@ const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="dashboard" replace /> },
           { path: "dashboard", element: <AdminDashboard /> },
+          { path: "marketplace", element: <Marketplace /> },
           { path: "users", element: <AdminUsers /> },
           { path: "withdrawals", element: <AdminWithdrawals /> },
           { path: "reports", element: <AdminReports /> },

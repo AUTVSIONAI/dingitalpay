@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import PageContent from "@/components/layout/PageContent";
 import { toast } from "sonner";
 import { usePageMeta } from "@/contexts/PageMetaContext";
@@ -9,6 +9,9 @@ import LoadingState from "@/components/shared/LoadingState";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -16,8 +19,8 @@ import {
   Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
-import { Package, DollarSign, Calendar, ShoppingCart, Users, User, Copy } from "lucide-react";
-import { getAdminProducts, getAdminProductSales } from "@/services/admin.service";
+import { Package, DollarSign, Calendar, ShoppingCart, Users, User, Copy, ShieldCheck, Percent } from "lucide-react";
+import { getAdminProducts, getAdminProductSales, getAdminAffiliateProgram, updateAdminAffiliateProgram } from "@/services/admin.service";
 import { formatDatePtBr } from "@/lib/timezone";
 
 interface AdminProduct {
@@ -45,6 +48,11 @@ const AdminProducts = () => {
   const [selectedProduct, setSelectedProduct] = useState<AdminProduct | null>(null);
   const [viewSheetOpen, setViewSheetOpen] = useState(false);
   const [productSales, setProductSales] = useState<{ id: string; buyer: string; amount: string; date: string; status: string }[]>([]);
+  const [affiliateLoading, setAffiliateLoading] = useState(false);
+  const [affiliateSaving, setAffiliateSaving] = useState(false);
+  const [affiliateEnabled, setAffiliateEnabled] = useState(false);
+  const [affiliateCommissionPercent, setAffiliateCommissionPercent] = useState("30");
+  const [affiliateCookieDays, setAffiliateCookieDays] = useState("30");
 
   useEffect(() => {
     const load = async () => {
@@ -73,6 +81,39 @@ const AdminProducts = () => {
       setProductSales(sales);
     } catch { setProductSales([]); }
   };
+
+  useEffect(() => {
+    if (!viewSheetOpen || !selectedProduct) return;
+    let cancelled = false;
+    setAffiliateLoading(true);
+    getAdminAffiliateProgram(selectedProduct.id)
+      .then((program) => {
+        if (cancelled) return;
+        setAffiliateEnabled(Boolean(program.enabled));
+        setAffiliateCommissionPercent(String(Number(program.commission_percent ?? 0)));
+        setAffiliateCookieDays(String(Number(program.cookie_days ?? 30)));
+      })
+      .catch((err: any) => {
+        const message = err instanceof Error ? err.message : "Falha ao carregar afiliação.";
+        toast.error(message);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAffiliateLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewSheetOpen, selectedProduct?.id]);
+
+  const canSaveAffiliate = useMemo(() => {
+    if (!selectedProduct) return false;
+    const percent = Number(affiliateCommissionPercent);
+    const days = Number(affiliateCookieDays);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100) return false;
+    if (!Number.isFinite(days) || days < 1 || days > 365) return false;
+    return true;
+  }, [selectedProduct, affiliateCommissionPercent, affiliateCookieDays]);
 
   const columns: DataTableColumn<AdminProduct>[] = [
     {
@@ -147,6 +188,7 @@ const AdminProducts = () => {
                   <TabsList className="w-full">
                     <TabsTrigger value="geral" className="flex-1">Geral</TabsTrigger>
                     <TabsTrigger value="vendas" className="flex-1">Vendas</TabsTrigger>
+                    <TabsTrigger value="afiliacao" className="flex-1">Afiliação</TabsTrigger>
                   </TabsList>
                   <TabsContent value="geral" className="space-y-5 mt-4">
                     <div className="space-y-2">
@@ -192,6 +234,74 @@ const AdminProducts = () => {
                           </div>
                         ))}
                       </div>
+                    )}
+                  </TabsContent>
+                  <TabsContent value="afiliacao" className="mt-4 space-y-5">
+                    {affiliateLoading ? (
+                      <LoadingState />
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-3 text-sm">
+                          <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-muted-foreground">Aprovar e configurar programa de afiliados</span>
+                        </div>
+                        <Separator />
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="space-y-0.5">
+                            <div className="text-sm font-medium text-foreground">Ativar afiliação</div>
+                            <div className="text-xs text-muted-foreground">Quando ativo, afiliados conseguem gerar links para este produto.</div>
+                          </div>
+                          <Switch checked={affiliateEnabled} onCheckedChange={setAffiliateEnabled} />
+                        </div>
+
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label>Comissão (%)</Label>
+                            <div className="relative">
+                              <Percent className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                              <Input
+                                className="pl-9"
+                                inputMode="decimal"
+                                value={affiliateCommissionPercent}
+                                onChange={(e) => setAffiliateCommissionPercent(e.target.value)}
+                              />
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Cookie (dias)</Label>
+                            <Input
+                              inputMode="numeric"
+                              value={affiliateCookieDays}
+                              onChange={(e) => setAffiliateCookieDays(e.target.value)}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            onClick={async () => {
+                              if (!selectedProduct) return;
+                              setAffiliateSaving(true);
+                              try {
+                                await updateAdminAffiliateProgram(selectedProduct.id, {
+                                  enabled: affiliateEnabled,
+                                  commission_percent: Number(affiliateCommissionPercent),
+                                  cookie_days: Number(affiliateCookieDays),
+                                });
+                                toast.success("Afiliação atualizada!");
+                              } catch (err: any) {
+                                const message = err instanceof Error ? err.message : "Falha ao salvar afiliação.";
+                                toast.error(message);
+                              } finally {
+                                setAffiliateSaving(false);
+                              }
+                            }}
+                            disabled={!canSaveAffiliate || affiliateSaving}
+                          >
+                            {affiliateSaving ? "Salvando..." : "Salvar"}
+                          </Button>
+                        </div>
+                      </>
                     )}
                   </TabsContent>
                 </Tabs>

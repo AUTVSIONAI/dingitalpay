@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePublicProducts, useCreateAffiliateLink } from "@/hooks/useProducts";
 import { Button } from "@/components/ui/button";
@@ -20,7 +21,28 @@ const typeLabel: Record<string, string> = {
 
 const Marketplace = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const location = useLocation();
+  const { user, role } = useAuth();
+
+  const appArea = useMemo(() => {
+    const path = location.pathname || "/";
+    return path.startsWith("/app/") || path.startsWith("/buyer/") || path.startsWith("/admin/");
+  }, [location.pathname]);
+
+  const backPath = useMemo(() => {
+    const path = location.pathname || "/";
+    if (path.startsWith("/buyer/")) return "/buyer/purchases";
+    if (path.startsWith("/admin/")) return "/admin/dashboard";
+    if (path.startsWith("/app/")) return "/app/dashboard";
+    return "/";
+  }, [location.pathname]);
+
+  const accountPath = useMemo(() => {
+    if (role === "buyer") return "/buyer/purchases";
+    if (role === "seller") return "/app/dashboard";
+    if (role === "admin") return "/admin/dashboard";
+    return "/";
+  }, [role]);
 
   const [q, setQ] = useState("");
   const [submittedQ, setSubmittedQ] = useState("");
@@ -60,19 +82,34 @@ const Marketplace = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className={appArea ? "bg-background text-foreground" : "min-h-screen bg-background text-foreground"}>
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
-        <Link to="/" className="flex items-center gap-2">
+        <div className="flex items-center gap-2">
+          {appArea ? (
+            <Button asChild variant="ghost" className="-ml-2">
+              <Link to={backPath}>Voltar</Link>
+            </Button>
+          ) : null}
+          <Link to={appArea ? backPath : "/"} className="flex items-center gap-2">
           <ShoppingBag className="h-5 w-5 text-primary" />
           <span className="text-sm font-semibold">Marketplace</span>
-        </Link>
+          </Link>
+        </div>
         <div className="flex items-center gap-2">
-          <Button asChild variant="ghost" className="hidden sm:inline-flex">
-            <Link to="/auth/login">Entrar</Link>
-          </Button>
-          <Button asChild variant="outline">
-            <Link to="/buyer/login">Sou comprador</Link>
-          </Button>
+          {user ? (
+            <Button asChild variant="outline">
+              <Link to={accountPath}>Minha conta</Link>
+            </Button>
+          ) : (
+            <>
+              <Button asChild variant="ghost" className="hidden sm:inline-flex">
+                <Link to="/auth/login">Entrar</Link>
+              </Button>
+              <Button asChild variant="outline">
+                <Link to="/buyer/login">Sou comprador</Link>
+              </Button>
+            </>
+          )}
         </div>
       </header>
 

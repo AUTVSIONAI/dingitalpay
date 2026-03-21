@@ -176,6 +176,60 @@ export const getAdminProductSales = async (productId: string) => {
   }));
 };
 
+export type AdminAffiliateProgram = {
+  product_id: string;
+  enabled: boolean;
+  commission_percent: number;
+  cookie_days: number;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export const getAdminAffiliateProgram = async (productId: string): Promise<AdminAffiliateProgram> => {
+  if (isDemo()) {
+    return {
+      product_id: productId,
+      enabled: true,
+      commission_percent: 30,
+      cookie_days: 30,
+      created_at: null,
+      updated_at: null,
+    };
+  }
+  const response = await fetch(`/api/admin/products/${encodeURIComponent(productId)}/affiliate-program`, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(formatApiError(payload, "Falha ao carregar afiliação."));
+  return (payload?.data ?? null) as AdminAffiliateProgram;
+};
+
+export const updateAdminAffiliateProgram = async (
+  productId: string,
+  updates: Partial<Pick<AdminAffiliateProgram, "enabled" | "commission_percent" | "cookie_days">>
+): Promise<AdminAffiliateProgram> => {
+  if (blockDemoWrite("Editar afiliação")) {
+    return {
+      product_id: productId,
+      enabled: Boolean(updates.enabled),
+      commission_percent: Number(updates.commission_percent ?? 30),
+      cookie_days: Number(updates.cookie_days ?? 30),
+      created_at: null,
+      updated_at: null,
+    };
+  }
+  const response = await fetch(`/api/admin/products/${encodeURIComponent(productId)}/affiliate-program`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(formatApiError(payload, "Falha ao salvar afiliação."));
+  return (payload?.data ?? null) as AdminAffiliateProgram;
+};
+
 export const fetchAdminReportsSummary = async (period: AdminRevenuePeriod = "year"): Promise<AdminReportsSummary> => {
   if (isDemo()) {
     const parseCurrency = (value: string) =>

@@ -3,6 +3,7 @@ import type { Db } from "./db.js";
 import { loadEnv } from "./env.js";
 import { verifyTrackingToken } from "./tracking.js";
 import * as crypto from "node:crypto";
+import { Readable } from "node:stream";
 import { z } from "zod";
 import { classifyEmailTrackingSource, isHumanTrackingEvent, truncateHeaderValue } from "./emailTrackingClassifier.js";
 
@@ -251,6 +252,54 @@ export async function registerPublicRoutes(app: FastifyInstance, db: Db) {
   app.get("/public/platform-settings", async (_req, reply) => {
     const res = await db.query("select * from public.platform_settings limit 1");
     return reply.send({ data: res.rows[0] ?? null, error: null });
+  });
+
+  app.get("/public/og-image", async (req, reply) => {
+    const res = await db.query<any>("select logo_url, dark_logo_url, white_logo_url, favicon_url from public.platform_settings limit 1");
+    const row = res.rows[0] || {};
+    const imageUrl =
+      String(row.dark_logo_url || "").trim() ||
+      String(row.white_logo_url || "").trim() ||
+      String(row.logo_url || "").trim() ||
+      String(row.favicon_url || "").trim();
+
+    if (!imageUrl) {
+      return reply.redirect("/favicon.png");
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 6_000);
+    try {
+      const upstream = await fetch(imageUrl, {
+        signal: controller.signal,
+        headers: {
+          accept: "image/avif,image/webp,image/*,*/*;q=0.8",
+          "user-agent": "DingitalPayBot/1.0",
+        },
+      });
+
+      if (!upstream.ok) {
+        return reply.redirect("/favicon.png");
+      }
+
+      const contentType = String(upstream.headers.get("content-type") || "").toLowerCase();
+      if (!contentType.startsWith("image/")) {
+        return reply.redirect("/favicon.png");
+      }
+
+      reply.header("Content-Type", contentType);
+      reply.header("Cache-Control", "public, max-age=3600");
+
+      if (!upstream.body) {
+        return reply.redirect("/favicon.png");
+      }
+
+      return reply.send(Readable.fromWeb(upstream.body as any));
+    } catch {
+      return reply.redirect("/favicon.png");
+    } finally {
+      clearTimeout(timeout);
+    }
   });
 
   app.get("/public/offers/slug/:slug", async (req, reply) => {

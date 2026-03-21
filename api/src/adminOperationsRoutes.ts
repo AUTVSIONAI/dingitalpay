@@ -47,6 +47,30 @@ async function ensureAdmin(db: Db, req: any, reply: any) {
   await requireAdmin(db, req, reply);
 }
 
+function isMissingAffiliateMigration(err: any) {
+  const code = String(err?.code || "");
+  if (code === "42P01") return true;
+  if (code === "42704") return true;
+  if (code === "42703") return true;
+  const msg = String(err?.message || "").toLowerCase();
+  return (
+    msg.includes("does not exist") ||
+    msg.includes("undefined_table") ||
+    msg.includes("relation") ||
+    msg.includes("undefined object") ||
+    msg.includes("undefined column")
+  );
+}
+
+function sendAffiliateMigrationRequired(reply: any) {
+  return reply.code(503).send({
+    error: {
+      code: "MIGRATION_REQUIRED",
+      message: "Sistema de afiliados ainda não foi instalado no banco. Aplique a migração 0034_affiliates.sql e reinicie a API.",
+    },
+  });
+}
+
 function toSmtpConfigRowPayload(env: Env, values: z.infer<typeof smtpConfigSchema>, existing?: any) {
   const username = String(values.username || "").trim();
   const password = String(values.password || "").trim();
@@ -233,6 +257,97 @@ export async function registerAdminOperationsRoutes(api: FastifyInstance, db: Db
         sellerName: row.seller_name || "Desconhecido",
       })),
     });
+  });
+
+  api.get("/admin/products/:productId/affiliate-program", async (req, reply) => {
+    await ensureAdmin(db, req, reply);
+    const { productId } = z.object({ productId: z.string().uuid() }).parse(req.params);
+
+    const exists = await db.query("select id from public.products where id = $1 limit 1", [productId]);
+    if (!exists.rows[0]) {
+      return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Produto não encontrado." } });
+    }
+
+    try {
+      const res = await db.query<any>(
+        "select product_id, enabled, commission_percent, cookie_days, created_at, updated_at from public.affiliate_programs where product_id = $1 limit 1",
+        [productId]
+      );
+      const row = res.rows[0];
+      return reply.send({
+        data: row
+          ? {
+              product_id: String(row.product_id || ""),
+              enabled: row.enabled === true,
+              commission_percent: Number(row.commission_percent || 0),
+              cookie_days: Number(row.cookie_days || 0),
+              created_at: row.created_at,
+              updated_at: row.updated_at,
+            }
+          : {
+              product_id: productId,
+              enabled: false,
+              commission_percent: 30,
+              cookie_days: 30,
+              created_at: null,
+              updated_at: null,
+            },
+        error: null,
+      });
+    } catch (err: any) {
+      if (isMissingAffiliateMigration(err)) return sendAffiliateMigrationRequired(reply);
+      throw err;
+    }
+  });
+
+  api.put("/admin/products/:productId/affiliate-program", async (req, reply) => {
+    await ensureAdmin(db, req, reply);
+    const { productId } = z.object({ productId: z.string().uuid() }).parse(req.params);
+
+    const exists = await db.query("select id from public.products where id = $1 limit 1", [productId]);
+    if (!exists.rows[0]) {
+      return reply.code(404).send({ error: { code: "NOT_FOUND", message: "Produto não encontrado." } });
+    }
+
+    const body = z
+      .object({
+        enabled: z.boolean().optional(),
+        commission_percent: z.number().min(0).max(100).optional(),
+        cookie_days: z.number().int().min(1).max(365).optional(),
+      })
+      .refine((value) => Object.keys(value).length > 0, { message: "Nenhuma alteração informada." })
+      .parse(req.body ?? {});
+
+    try {
+      const res = await db.query<any>(
+        `
+          insert into public.affiliate_programs(product_id, enabled, commission_percent, cookie_days)
+          values ($1, coalesce($2, false), coalesce($3, 30), coalesce($4, 30))
+          on conflict (product_id) do update set
+            enabled = coalesce(excluded.enabled, public.affiliate_programs.enabled),
+            commission_percent = coalesce(excluded.commission_percent, public.affiliate_programs.commission_percent),
+            cookie_days = coalesce(excluded.cookie_days, public.affiliate_programs.cookie_days),
+            updated_at = now()
+          returning product_id, enabled, commission_percent, cookie_days, created_at, updated_at
+        `,
+        [productId, body.enabled ?? null, body.commission_percent ?? null, body.cookie_days ?? null]
+      );
+      const row = res.rows[0];
+      return reply.send({
+        data: {
+          product_id: String(row.product_id || ""),
+          enabled: row.enabled === true,
+          commission_percent: Number(row.commission_percent || 0),
+          cookie_days: Number(row.cookie_days || 0),
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+        },
+        error: null,
+      });
+    } catch (err: any) {
+      if (isMissingAffiliateMigration(err)) return sendAffiliateMigrationRequired(reply);
+      throw err;
+    }
   });
 
   api.get("/admin/products/:productId/sales", async (req, reply) => {

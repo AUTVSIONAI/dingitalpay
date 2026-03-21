@@ -6,7 +6,7 @@ export interface SidebarMenuItem {
 
 export const adminMenu: SidebarMenuItem[] = [
   { label: "Dashboard", icon: "LayoutDashboard", path: "/admin/dashboard" },
-  { label: "Marketplace", icon: "ShoppingBag", path: "/marketplace" },
+  { label: "Marketplace", icon: "ShoppingBag", path: "/admin/marketplace" },
   { label: "Usuários", icon: "Users", path: "/admin/users" },
   { label: "Saques", icon: "Wallet", path: "/admin/withdrawals" },
   { label: "Produtos", icon: "Package", path: "/admin/products" },
@@ -22,7 +22,7 @@ export const adminMenu: SidebarMenuItem[] = [
 
 export const sellerMenu: SidebarMenuItem[] = [
   { label: "Dashboard", icon: "LayoutDashboard", path: "/app/dashboard" },
-  { label: "Marketplace", icon: "ShoppingBag", path: "/marketplace" },
+  { label: "Marketplace", icon: "ShoppingBag", path: "/app/marketplace" },
   { label: "Vendas", icon: "ShoppingCart", path: "/app/sales" },
   { label: "Produtos", icon: "Package", path: "/app/products" },
   
@@ -31,7 +31,7 @@ export const sellerMenu: SidebarMenuItem[] = [
 ];
 
 export const buyerMenu: SidebarMenuItem[] = [
-  { label: "Marketplace", icon: "ShoppingBag", path: "/marketplace" },
+  { label: "Marketplace", icon: "ShoppingBag", path: "/buyer/marketplace" },
   { label: "Minhas Compras", icon: "ShoppingBag", path: "/buyer/purchases" },
   { label: "Afiliados", icon: "Megaphone", path: "/buyer/affiliates" },
   { label: "Meus Cursos", icon: "GraduationCap", path: "/members/courses" },
