@@ -310,9 +310,11 @@ export const useUpdateAffiliateProgram = (productId: string) => {
 };
 
 export const useAffiliateLinks = (params?: { product_id?: string }) => {
+  const { user } = useAuth();
   return useQuery({
     queryKey: ["affiliate-links", params?.product_id || ""],
     queryFn: () => fetchAffiliateLinks(params),
+    enabled: !!user,
   });
 };
 
@@ -331,16 +333,20 @@ export const useCreateAffiliateLink = () => {
 };
 
 export const useAffiliateCommissions = (params?: { status?: DbAffiliateCommission["commission_status"] }) => {
+  const { user } = useAuth();
   return useQuery({
     queryKey: ["affiliate-commissions", params?.status || ""],
     queryFn: () => fetchAffiliateCommissions(params),
+    enabled: !!user,
   });
 };
 
 export const useAffiliateSummary = () => {
+  const { user } = useAuth();
   return useQuery({
     queryKey: ["affiliate-summary"],
     queryFn: fetchAffiliateSummary,
+    enabled: !!user,
   });
 };
 

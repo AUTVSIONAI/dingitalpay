@@ -12,8 +12,16 @@ function ensureAuth(req: any, reply: any) {
 function isMissingTableError(err: any) {
   const code = String(err?.code || "");
   if (code === "42P01") return true;
+  if (code === "42704") return true;
+  if (code === "42703") return true;
   const msg = String(err?.message || "").toLowerCase();
-  return msg.includes("does not exist") || msg.includes("undefined_table") || msg.includes("relation");
+  return (
+    msg.includes("does not exist") ||
+    msg.includes("undefined_table") ||
+    msg.includes("relation") ||
+    msg.includes("undefined object") ||
+    msg.includes("undefined column")
+  );
 }
 
 function sendMigrationRequired(reply: any) {
@@ -224,7 +232,7 @@ export async function registerAffiliateRoutes(api: FastifyInstance, db: Db, env:
           join public.orders o on o.id = c.order_id
           join public.products p on p.id = c.product_id
           where c.affiliate_user_id = $1
-            and ($2::public.affiliate_commission_status is null or c.status = $2::public.affiliate_commission_status)
+            and ($2::text is null or c.status::text = $2::text)
           order by c.created_at desc
           limit 500
         `,
